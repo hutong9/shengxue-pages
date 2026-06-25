@@ -1,0 +1,72 @@
+% ============================================================
+%  2026声学会议论文摘要集 — 完整版
+%  编译：node generate_tex.js → pdflatex main_full → pdflatex main_full
+% ============================================================
+\documentclass[a4paper,twoside]{ctexart}
+
+\usepackage[top=2.5cm, bottom=2.5cm, left=2.8cm, right=2.8cm]{geometry}
+\setlength{\headheight}{14pt}
+
+\usepackage{newtxtext}
+\usepackage{newtxmath}
+\usepackage{setspace}
+
+\newcommand{\wuhao}{\fontsize{10.5pt}{15pt}\selectfont}
+\newcommand{\xiaosi}{\fontsize{12pt}{18pt}\selectfont}
+\newcommand{\sihao}{\fontsize{14pt}{20pt}\selectfont}
+\newcommand{\sanhao}{\fontsize{16pt}{24pt}\selectfont}
+\newcommand{\xiaoer}{\fontsize{18pt}{26pt}\selectfont}
+
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[C]{\songti\wuhao 2026年全国声学大会}
+\fancyfoot[C]{\songti\wuhao\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\usepackage{indentfirst}
+\setlength{\parindent}{2em}
+\setlength{\parskip}{0pt plus 1pt}
+\setstretch{1.5}
+
+\newcommand{\printpaper}[7]{%
+  \clearpage
+  \noindent{\heiti\xiaosi 专题：#1}\hfill{\songti\wuhao #2}
+  \par\vspace{10pt}
+  \begin{center}
+    {\heiti\xiaoer\textbf{#3}}
+  \end{center}
+  \vspace{6pt}
+  \begin{center}
+    {\kaishu\sihao #4}
+  \end{center}
+  \vspace{2pt}
+  \begin{center}
+    {\songti\wuhao #5}
+  \end{center}
+  \vspace{10pt}
+  {\songti\wuhao\noindent\textbf{摘要：}#6}
+  \par\vspace{8pt}
+  {\songti\wuhao\noindent\textbf{关键词：}#7}
+  \par\vspace{6pt}
+}
+
+\newcommand{\ns}[1]{\textsuperscript{#1}}
+\newcommand{\ca}{\textsuperscript{*}}
+
+\begin{document}
+
+\thispagestyle{empty}
+\vspace*{3cm}
+\begin{center}
+  {\heiti\fontsize{36pt}{48pt}\selectfont 2026年全国声学大会}
+  \vspace{1cm}
+  {\kaishu\sanhao 论文摘要集}
+  \vfill
+  {\songti\wuhao\today}
+\end{center}
+\clearpage
+
+\input{papers_content}
+
+\end{document}

@@ -1,0 +1,27 @@
+# LaTeX 编译产物
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+missfont.log
+
+# 生成的 PDF（可按需取消注释以纳入版本管理）
+*.pdf
+
+# 由 generate_tex.js 生成的中间文件
+papers_content.tex
+
+# 编辑器
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# 依赖
+node_modules/
+
+# 工作流模板（非项目源码）
+.spec-workflow/
+.serena/
