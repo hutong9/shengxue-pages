@@ -32,6 +32,21 @@
 \usepackage{longtable}
 \usepackage[hidelinks,colorlinks=false,pdfborder={0 0 0}]{hyperref}
 
+\newcommand{\tocentry}[4]{%
+  \begingroup
+  \emergencystretch=2em
+  \noindent\hangindent=5em\hangafter=1
+  \makebox[5em][l]{\wuhao #1}%
+  {\wuhao\hyperlink{paper:#2}{#3}}%
+  \nobreak\leaders\hbox to .5em{\hss.\hss}\hfill
+  \nobreak\makebox[2.5em][r]{\wuhao\pageref{paper:#2}}%
+  \par
+  \noindent\hangindent=5em\hangafter=1
+  \hspace*{5em}{\kaishu\wuhao #4}%
+  \par\vspace{5pt}%
+  \endgroup
+}
+
 \newcommand{\printpaper}[8]{%
   \clearpage
   \hypertarget{paper:#8}{}\label{paper:#8}%

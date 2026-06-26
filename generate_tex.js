@@ -280,25 +280,7 @@ for (const [session, entries] of sessions) {
     // 转义标题和作者中的 LaTeX 特殊字符
     const titleEsc = escapeLatex(titleClean);
     const authEsc = escapeLatex(e.authors);
-
-
-
-    // 判断标题是否超过一行（汉字/字母加权估算）
-    const estWidth = (titleClean.match(/[\u4e00-\u9fff]/g)||[]).length + (titleClean.match(/[\x00-\x7f]/g)||[]).length * 0.55;
-    if (estWidth > 30) {
-      // 长标题：编号+标题一行，页码在下一行用 dotfill + hfill 推至右侧带引导符
-      tocLines.push(`\\noindent\\hangindent=5em\\hangafter=1\\makebox[5em][l]{\\wuhao ${e.id}}\\hyperlink{paper:${e.labelId}}{\\wuhao ${titleEsc}}`);
-      tocLines.push(`\\par\\noindent\\hspace*{5em}\\dotfill\\makebox[2.5em][r]{\\wuhao\\pageref{paper:${e.labelId}}}`);
-      tocLines.push(`\\par\\vspace{2pt}`);
-    } else {
-      // 短标题：编号、标题、引导符、页码在一行内，用 makebox[\linewidth][s] 两端对齐
-      tocLines.push(`\\noindent\\makebox[5em][l]{\\wuhao ${e.id}}\\makebox[\\dimexpr\\linewidth-5em][s]{\\hyperlink{paper:${e.labelId}}{\\wuhao ${titleEsc}}\\dotfill\\makebox[2.5em][r]{\\wuhao\\pageref{paper:${e.labelId}}}}`);
-      tocLines.push(`\\par`);
-    }
-
-
-    tocLines.push(`\\noindent\\hspace*{5em}{\\kaishu\\wuhao ${authEsc}}`);
-    tocLines.push(`\\par\\vspace{5pt}`);
+    tocLines.push(`\\tocentry{${e.id}}{${e.labelId}}{${titleEsc}}{${authEsc}}`);
   }
   tocLines.push('\\vspace{6pt}');
   tocLines.push('');
