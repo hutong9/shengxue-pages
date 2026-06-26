@@ -1,5 +1,5 @@
 % ============================================================
-%  2026声学会议论文摘要集 — 完整版
+%  2026声学会议论文摘要集 — 完整版（含超链接目录）
 %  编译：node generate_tex.js → pdflatex main_full → pdflatex main_full
 % ============================================================
 \documentclass[a4paper,twoside]{ctexart}
@@ -29,8 +29,13 @@
 \setlength{\parskip}{0pt plus 1pt}
 \setstretch{1.5}
 
-\newcommand{\printpaper}[7]{%
+\usepackage{longtable}
+% 超链接（无边框，打印友好）
+\usepackage[hidelinks,colorlinks=false,pdfborder={0 0 0}]{hyperref}
+
+\newcommand{\printpaper}[8]{%
   \clearpage
+  \hypertarget{paper:#8}{}\label{paper:#8}%
   \noindent{\heiti\xiaosi 专题：#1}\hfill{\songti\wuhao #2}
   \par\vspace{10pt}
   \begin{center}
@@ -56,15 +61,48 @@
 
 \begin{document}
 
+
 \thispagestyle{empty}
-\vspace*{3cm}
+\vspace*{2cm}
 \begin{center}
-  {\heiti\fontsize{36pt}{48pt}\selectfont 2026年全国声学大会}
-  \vspace{1cm}
-  {\kaishu\sanhao 论文摘要集}
-  \vfill
-  {\songti\wuhao\today}
+  {\heiti\sanhao 2026年全国声学大会}
+  \vspace{0.6cm}
+
+  {\heiti\fontsize{36pt}{48pt}\selectfont 论文摘要集}
+  \vspace{2.5cm}
+
+  {\heiti\sihao 主办单位}
+  \vspace{0.3cm}
+
+  {\songti\sihao 中国声学学会}
+  \vspace{1.2cm}
+
+  {\heiti\sihao 承办单位}
+  \vspace{0.3cm}
+
+  {\songti\sihao 西北工业大学}
+  \vspace{1.2cm}
+
+  {\heiti\sihao 协办单位}
+  \vspace{0.3cm}
+
+  {\songti\sihao 陕西师范大学}
+
+  \vspace{0.2cm}
+  {\songti\sihao 陕西省超声学重点实验室}
+
+  \vspace{0.2cm}
+  {\songti\sihao 陕西省声学学会}
+
+  \vspace{0.2cm}
+  {\songti\sihao 西安市声学学会}
+
+  \vspace{0.2cm}
+  {\songti\sihao 陕西省水下信息技术重点实验室}
 \end{center}
+\clearpage
+
+\input{toc_content}
 \clearpage
 
 \input{papers_content}

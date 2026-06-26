@@ -1,38 +1,22 @@
 % ============================================================
 %  2026声学会议论文摘要集 — LaTeX 模板（单篇示例）
-%  编译：pdflatex main  或  xelatex main --shell-escape
-%  依赖：TeX Live 2026（含 ctex, fancyhdr, setspace, newtxtext）
-%
-%  字体规格：
-%    标题  — 黑体 小二号(18pt)，加粗，居中，1.5倍行距
-%    作者  — 楷体 四号(14pt)，居中
-%    单位  — 宋体 五号(10.5pt)，居中
-%    摘要  — 宋体 五号(10.5pt)，两端对齐，首行缩进2字
-%    关键词— 宋体 五号(10.5pt)
-%    专题  — 黑体 小四号(12pt)
-%    编号  — 宋体 五号(10.5pt)
-%    英文  — Times New Roman
-%  页眉：居中"2026年全国声学大会"
+%  编译：pdflatex main  （两次编译更新目录页码）
 % ============================================================
 \documentclass[a4paper,twoside]{ctexart}
 
-% ---------- 页面布局 ----------
 \usepackage[top=2.5cm, bottom=2.5cm, left=2.8cm, right=2.8cm]{geometry}
 \setlength{\headheight}{14pt}
 
-% ---------- 字体 ----------
 \usepackage{newtxtext}
 \usepackage{newtxmath}
 \usepackage{setspace}
 
-% ---------- 自定义字号 ----------
 \newcommand{\wuhao}{\fontsize{10.5pt}{15pt}\selectfont}
 \newcommand{\xiaosi}{\fontsize{12pt}{18pt}\selectfont}
 \newcommand{\sihao}{\fontsize{14pt}{20pt}\selectfont}
 \newcommand{\sanhao}{\fontsize{16pt}{24pt}\selectfont}
 \newcommand{\xiaoer}{\fontsize{18pt}{26pt}\selectfont}
 
-% ---------- 页眉页脚（统一居中"2026年全国声学大会"）----------
 \usepackage{fancyhdr}
 \pagestyle{fancy}
 \fancyhf{}
@@ -40,40 +24,33 @@
 \fancyfoot[C]{\songti\wuhao\thepage}
 \renewcommand{\headrulewidth}{0.4pt}
 
-% ---------- 段落 ----------
 \usepackage{indentfirst}
 \setlength{\parindent}{2em}
 \setlength{\parskip}{0pt plus 1pt}
 \setstretch{1.5}
 
-% ============================================================
-%  输出单篇摘要
-%  #1=专题  #2=编号  #3=标题  #4=作者  #5=单位  #6=摘要  #7=关键词
-% ============================================================
-\newcommand{\printpaper}[7]{%
+\usepackage{longtable}
+\usepackage[hidelinks,colorlinks=false,pdfborder={0 0 0}]{hyperref}
+
+\newcommand{\printpaper}[8]{%
   \clearpage
-  % 专题（黑体小四号 12pt 左对齐）+ 编号（宋体五号 10.5pt 右对齐）
+  \hypertarget{paper:#8}{}\label{paper:#8}%
   \noindent{\heiti\xiaosi 专题：#1}\hfill{\songti\wuhao #2}
   \par\vspace{10pt}
-  % 标题（黑体 小二号 18pt 加粗 居中）
   \begin{center}
     {\heiti\xiaoer\textbf{#3}}
   \end{center}
   \vspace{6pt}
-  % 作者（楷体 四号 14pt 居中）
   \begin{center}
     {\kaishu\sihao #4}
   \end{center}
   \vspace{2pt}
-  % 单位（宋体 五号 10.5pt 居中，不带序号前缀）
   \begin{center}
     {\songti\wuhao #5}
   \end{center}
   \vspace{10pt}
-  % 摘要（宋体 五号 10.5pt 两端对齐）
   {\songti\wuhao\noindent\textbf{摘要：}#6}
   \par\vspace{8pt}
-  % 关键词（宋体 五号 10.5pt）
   {\songti\wuhao\noindent\textbf{关键词：}#7}
   \par\vspace{6pt}
 }
@@ -81,10 +58,8 @@
 \newcommand{\ns}[1]{\textsuperscript{#1}}
 \newcommand{\ca}{\textsuperscript{*}}
 
-% ============================================================
 \begin{document}
 
-% ---- 封面 ----
 \thispagestyle{empty}
 \vspace*{3cm}
 \begin{center}
@@ -96,7 +71,9 @@
 \end{center}
 \clearpage
 
-% ---- 示例（两个单位，不标序号） ----
+\input{toc_content}
+\clearpage
+
 \printpaper
   {A. 水下声学}
   {A0094}
@@ -116,5 +93,6 @@
   {%
     三维声传播；耦合简正波；水平折射；浅海波导；实验验证
   }
+  {A0094}
 
 \end{document}

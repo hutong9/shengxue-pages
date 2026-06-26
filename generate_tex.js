@@ -69,19 +69,18 @@ function convertHtmlEntities(text) {
 /** 转义摘要文本：先转 HTML 实体，再转 LaTeX 特殊字符（注意 & 在实体转换后再转义） */
 function sanitizeAbstract(text) {
   let t = s(text);
-  // 第一步：HTML 实体 → 纯文本/LaTeX 命令
-  t = convertHtmlEntities(t);
-  // 第二步：LaTeX 特殊字符转义（& 必须最后处理）
+  // 第一步：转义原始文本中的 LaTeX 特殊字符
   t = t.replace(/%/g, '\\%')
-       .replace(/\$/g, '\\$')
        .replace(/_/g, '\\_')
        .replace(/#/g, '\\#')
        .replace(/~/g, '\\~{}')
        .replace(/</g, '\\textless{}')
        .replace(/>/g, '\\textgreater{}');
-  // & 单独转义，避免破坏已有的 LaTeX 命令
-  t = t.replace(/(?<!\\)&(?!\w+;)/g, '\\&');
-  // 处理罕见 Unicode 字符（CJK Ext-E 等，用 XeTeX 才能正确渲染，pdflatex 会失败）
+  // 第二步：HTML/Unicode 实体 → LaTeX 命令（可能引入 $ 等数学符号）
+  t = convertHtmlEntities(t);
+  // 第三步：转义孤立的 &（不破坏已有的 LaTeX 命令如 \\textbackslash）
+  t = t.replace(/(?<!\\)&(?!\w+;|[a-zA-Z]{2,})/g, '\\&');
+  // 第四步：去掉 CJK Ext-E 等 pdflatex 不支持的字符
   t = t.replace(/[\u{2A700}-\u{2F7FF}]/gu, '?');
   return t;
 }
@@ -89,29 +88,26 @@ function sanitizeAbstract(text) {
 /** 转义标题 */
 function sanitizeTitle(text) {
   let t = s(text);
-  t = convertHtmlEntities(t);
   t = t.replace(/%/g, '\\%')
-       .replace(/\$/g, '\\$')
        .replace(/_/g, '\\_')
        .replace(/#/g, '\\#')
        .replace(/~/g, '\\~{}');
-  t = t.replace(/(?<!\\)&(?!\w+;)/g, '\\&');
+  t = convertHtmlEntities(t);
+  t = t.replace(/(?<!\\)&(?!\w+;|[a-zA-Z]{2,})/g, '\\&');
   t = t.replace(/^[\u200B-\u200F\uFEFF]+/, '');
-  t = t.replace(/<[^>]*>/g, '');  // strip HTML tags
+  t = t.replace(/<[^>]*>/g, '');
   return t;
 }
 
 /** 转义关键词 */
 function sanitizeKeywords(text) {
   let t = s(text);
-  t = convertHtmlEntities(t);
   t = t.replace(/%/g, '\\%')
-       .replace(/\$/g, '\\$')
        .replace(/_/g, '\\_')
        .replace(/#/g, '\\#')
        .replace(/~/g, '\\~{}');
-  t = t.replace(/(?<!\\)&(?!\w+;)/g, '\\&');
-  // 逗号分隔 → 中文分号
+  t = convertHtmlEntities(t);
+  t = t.replace(/(?<!\\)&(?!\w+;|[a-zA-Z]{2,})/g, '\\&');
   t = t.split(',').map(k => k.trim()).filter(Boolean).join('；');
   return t;
 }
@@ -195,7 +191,9 @@ function processPaper(row) {
 
   // 标题换行处理：过长标题在 40 字处断行
   const titleLine = title.length > 45 ? `${title.slice(0, Math.floor(title.length/2))}\\\\\n   ${title.slice(Math.floor(title.length/2))}` : title;
+  const isTitleMultiLine = title.length > 45;
 
+  const labelId = paperId.replace(/[^A-Za-z0-9]/g, '');
   return `\\printpaper
   {${session}}
   {${paperId}}
@@ -211,7 +209,9 @@ function processPaper(row) {
   }
   {%
     ${keywords}
-  }`;
+  }
+  {${labelId}}
+  {${isTitleMultiLine}}`;
 }
 
 // ---- 主流程 ----
@@ -238,6 +238,75 @@ for (const row of data) {
 
 console.log(`Processed ${papers.length} valid papers.`);
 
+// 生成 TOC（按专题分组，带引导符和超链接）
+const TOC_PATH = path.join(__dirname, 'toc_content.tex');
+const sessions = new Map();
+for (const row of data) {
+  const sid = s(row['论文编号']);
+  const session = s(row['论文专题']);
+  if (!sid) continue;
+  const labelId = sid.replace(/[^A-Za-z0-9]/g, '');
+  const authorNames = [];
+  for (let i = 1; i <= 12; i++) {
+    const n = sanitizeAuthorName(row[`作者姓名${i}`]);
+    if (n) authorNames.push(n);
+  }
+  const authorStr = authorNames.join(', ');
+  const title = sanitizeTitle(row['论文标题']);
+  if (!sessions.has(session)) sessions.set(session, []);
+  sessions.get(session).push({ id: sid, labelId, title, authors: authorStr });
+}
+
+const tocLines = [
+  '% ============================================================',
+  '%  toc_content.tex — 目录（由 generate_tex.js 自动生成）',
+  `%  生成时间：${new Date().toISOString()}`,
+  '%  注意：需二次编译才能正确显示页码',
+  '% ============================================================',
+  '',
+  '\\begin{center}',
+  '  {\\heiti\\xiaoer 目\\quad 录}',
+  '\\end{center}',
+  '\\vspace{12pt}',
+  '',
+];
+
+for (const [session, entries] of sessions) {
+  tocLines.push(`\\begin{center}{\\heiti\\xiaosi ${session}}\\end{center}`);
+  tocLines.push('\\par\\vspace{6pt}');
+  for (const e of entries) {
+    // 清理标题中的零宽字符和 HTML 标签
+    const titleClean = e.title.replace(/^[\u200B-\u200F\uFEFF]+/, '').replace(/<[^>]*>/g, '');
+    // 转义标题和作者中的 LaTeX 特殊字符
+    const titleEsc = escapeLatex(titleClean);
+    const authEsc = escapeLatex(e.authors);
+
+
+
+    // 判断标题是否超过一行（汉字/字母加权估算）
+    const estWidth = (titleClean.match(/[\u4e00-\u9fff]/g)||[]).length + (titleClean.match(/[\x00-\x7f]/g)||[]).length * 0.55;
+    if (estWidth > 30) {
+      // 长标题：编号+标题一行，页码在下一行用 dotfill + hfill 推至右侧带引导符
+      tocLines.push(`\\noindent\\hangindent=5em\\hangafter=1\\makebox[5em][l]{\\wuhao ${e.id}}\\hyperlink{paper:${e.labelId}}{\\wuhao ${titleEsc}}`);
+      tocLines.push(`\\par\\noindent\\hspace*{5em}\\dotfill\\makebox[2.5em][r]{\\wuhao\\pageref{paper:${e.labelId}}}`);
+      tocLines.push(`\\par\\vspace{2pt}`);
+    } else {
+      // 短标题：编号、标题、引导符、页码在一行内，用 makebox[\linewidth][s] 两端对齐
+      tocLines.push(`\\noindent\\makebox[5em][l]{\\wuhao ${e.id}}\\makebox[\\dimexpr\\linewidth-5em][s]{\\hyperlink{paper:${e.labelId}}{\\wuhao ${titleEsc}}\\dotfill\\makebox[2.5em][r]{\\wuhao\\pageref{paper:${e.labelId}}}}`);
+      tocLines.push(`\\par`);
+    }
+
+
+    tocLines.push(`\\noindent\\hspace*{5em}{\\kaishu\\wuhao ${authEsc}}`);
+    tocLines.push(`\\par\\vspace{5pt}`);
+  }
+  tocLines.push('\\vspace{6pt}');
+  tocLines.push('');
+}
+
+fs.writeFileSync(TOC_PATH, tocLines.join('\n'), 'utf-8');
+console.log(`TOC written to ${TOC_PATH}`);
+
 // 生成输出
 const output = [
   '% ============================================================',
@@ -252,3 +321,6 @@ const output = [
 
 fs.writeFileSync(OUTPUT_PATH, output, 'utf-8');
 console.log(`Written to ${OUTPUT_PATH}`);
+
+
+
