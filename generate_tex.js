@@ -10,7 +10,7 @@
  *   2. 将所有单位拆分逗号 → 去重 → 按首次出现顺序编号
  *   3. 通讯作者在姓名后加 \ca（*号上标）
  *   4. 每位作者姓名后按 \ns{编号} 加单位序号
- *   5. 生成 \printpaper{...}{...}{...}{作者行}{单位行}{摘要}{关键词}
+ *   5. 生成 \printpaper{...}{...}{...}{作者行}{单位行}{通讯作者邮箱}{摘要}{关键词}
  */
 const XLSX = require('xlsx');
 const fs = require('fs');
@@ -48,14 +48,31 @@ function convertHtmlEntities(text) {
     '&beta;': '$\\beta$',    '&Beta;': '$\\Beta$',
     '&gamma;': '$\\gamma$',  '&Gamma;': '$\\Gamma$',
     '&delta;': '$\\delta$',  '&Delta;': '$\\Delta$',
+    '&epsilon;': '$\\epsilon$',
+    '&theta;': '$\\theta$',
     '&mu;': '$\\mu$',        '&micro;': '$\\mu$',
+    '&omega;': '$\\omega$',
+    '&pi;': '$\\pi$',
+    '&sigma;': '$\\sigma$',
+    '&tau;': '$\\tau$',
     '&plusmn;': '$\\pm$',    '±': '$\\pm$',
+    '&minus;': '$-$',
+    '&times;': '$\\times$',
+    '&ge;': '$\\ge$',
+    '&le;': '$\\le$',
+    '&asymp;': '$\\asymp$',
+    '&rarr;': '$\\rightarrow$',
     '&mdash;': '---',        '&ndash;': '--',
     '&hellip;': '…',         '&lsquo;': "'",
     '&rsquo;': "'",          '&ldquo;': '"',
     '&rdquo;': '"',          '&lt;': '<',
     '&gt;': '>',             '&nbsp;': '~',
+    '&middot;': '$\\cdot$',
+    '&ordm;': '\\textdegree{}',
+    '&eacute;': "\\'{e}",
+    '&zwnj;': '',
     '&deg;': '\\textdegree{}',
+    '&sup1;': '\\textsuperscript{1}',
     '&sup2;': '\\textsuperscript{2}',
     '&sup3;': '\\textsuperscript{3}',
   };
@@ -63,6 +80,8 @@ function convertHtmlEntities(text) {
   for (const [entity, latex] of Object.entries(map)) {
     result = result.split(entity).join(latex);
   }
+  result = result.replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)));
+  result = result.replace(/&#x([0-9a-fA-F]+);/g, (_, n) => String.fromCodePoint(parseInt(n, 16)));
   return result;
 }
 
@@ -79,7 +98,7 @@ function sanitizeAbstract(text) {
   // 第二步：HTML/Unicode 实体 → LaTeX 命令（可能引入 $ 等数学符号）
   t = convertHtmlEntities(t);
   // 第三步：转义孤立的 &（不破坏已有的 LaTeX 命令如 \\textbackslash）
-  t = t.replace(/(?<!\\)&(?!\w+;|[a-zA-Z]{2,})/g, '\\&');
+  t = t.replace(/(?<!\\)&/g, '\\&');
   // 第四步：去掉 CJK Ext-E 等 pdflatex 不支持的字符
   t = t.replace(/[\u{2A700}-\u{2F7FF}]/gu, '?');
   return t;
@@ -93,7 +112,7 @@ function sanitizeTitle(text) {
        .replace(/#/g, '\\#')
        .replace(/~/g, '\\~{}');
   t = convertHtmlEntities(t);
-  t = t.replace(/(?<!\\)&(?!\w+;|[a-zA-Z]{2,})/g, '\\&');
+  t = t.replace(/(?<!\\)&/g, '\\&');
   t = t.replace(/^[\u200B-\u200F\uFEFF]+/, '');
   t = t.replace(/<[^>]*>/g, '');
   return t;
@@ -107,7 +126,7 @@ function sanitizeKeywords(text) {
        .replace(/#/g, '\\#')
        .replace(/~/g, '\\~{}');
   t = convertHtmlEntities(t);
-  t = t.replace(/(?<!\\)&(?!\w+;|[a-zA-Z]{2,})/g, '\\&');
+  t = t.replace(/(?<!\\)&/g, '\\&');
   t = t.split(',').map(k => k.trim()).filter(Boolean).join('；');
   return t;
 }
@@ -127,6 +146,7 @@ function processPaper(row) {
   const keywords = sanitizeKeywords(row['论文关键字']);
   const abstract = sanitizeAbstract(row['摘要文本']);
   const corrAuthorName = sanitizeAuthorName(row['通讯作者姓名']);
+  const corrAuthorEmail = sanitizeAuthorName(row['通讯作者Email']);
 
   // 收集所有作者和单位
   const authors = [];  // [{ name, unitStr }]
@@ -189,10 +209,12 @@ function processPaper(row) {
     return escaped;
   }).join('；\\hspace{1em}\n    ');
 
+  const corrEmailLine = corrAuthorEmail
+    ? `\\textsuperscript{*}${escapeLatex(corrAuthorEmail)}`
+    : '';
+
   // 标题换行处理：过长标题在 40 字处断行
   const titleLine = title.length > 45 ? `${title.slice(0, Math.floor(title.length/2))}\\\\\n   ${title.slice(Math.floor(title.length/2))}` : title;
-  const isTitleMultiLine = title.length > 45;
-
   const labelId = paperId.replace(/[^A-Za-z0-9]/g, '');
   return `\\printpaper
   {${session}}
@@ -205,13 +227,15 @@ function processPaper(row) {
     ${unitLine}
   }
   {%
+    ${corrEmailLine}
+  }
+  {%
     ${abstract}
   }
   {%
     ${keywords}
   }
-  {${labelId}}
-  {${isTitleMultiLine}}`;
+  {${labelId}}`;
 }
 
 // ---- 主流程 ----

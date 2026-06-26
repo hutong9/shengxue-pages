@@ -48,9 +48,9 @@
   \endgroup
 }
 
-\newcommand{\printpaper}[8]{%
+\newcommand{\printpaper}[9]{%
   \clearpage
-  \hypertarget{paper:#8}{}\label{paper:#8}%
+  \hypertarget{paper:#9}{}\label{paper:#9}%
   \noindent{\heiti\xiaosi 专题：#1}\hfill{\songti\wuhao #2}
   \par\vspace{10pt}
   \begin{center}
@@ -64,10 +64,14 @@
   \begin{center}
     {\songti\wuhao #5}
   \end{center}
+  \vspace{2pt}
+  \begin{center}
+    {\songti\wuhao #6}
+  \end{center}
   \vspace{10pt}
-  {\songti\wuhao\noindent\textbf{摘要：}#6}
+  {\songti\wuhao\noindent\textbf{摘要：}#7}
   \par\vspace{8pt}
-  {\songti\wuhao\noindent\textbf{关键词：}#7}
+  {\songti\wuhao\noindent\textbf{关键词：}#8}
   \par\vspace{6pt}
 }
 
