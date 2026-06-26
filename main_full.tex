@@ -35,15 +35,27 @@
 
 \newcommand{\tocentry}[4]{%
   \begingroup
-  \emergencystretch=2em
-  \noindent\hangindent=5em\hangafter=1
-  \makebox[5em][l]{\wuhao #1}%
+  \emergencystretch=3em
+  \noindent\makebox[5em][l]{\wuhao #1}%
   {\wuhao\hyperlink{paper:#2}{#3}}%
   \nobreak\leaders\hbox to .5em{\hss.\hss}\hfill
-  \nobreak\makebox[2.5em][r]{\wuhao\pageref{paper:#2}}%
+  {\kaishu\wuhao #4}%
+  \makebox[3em][r]{\wuhao（\pageref{paper:#2}）}%
+  \par\vspace{5pt}%
+  \endgroup
+}
+
+\newcommand{\tocentrytwo}[4]{%
+  \begingroup
+  \emergencystretch=3em
+  \noindent\makebox[5em][l]{\wuhao #1}%
+  {\wuhao\hyperlink{paper:#2}{#3}}%
+  \nobreak\leaders\hbox to .5em{\hss.\hss}\hfill\mbox{}%
   \par
-  \noindent\hangindent=5em\hangafter=1
-  \hspace*{5em}{\kaishu\wuhao #4}%
+  \noindent\hspace*{5em}%
+  \nobreak\leaders\hbox to .5em{\hss.\hss}\hfill
+  {\kaishu\wuhao #4}%
+  \makebox[3em][r]{\wuhao（\pageref{paper:#2}）}%
   \par\vspace{5pt}%
   \endgroup
 }

@@ -136,6 +136,11 @@ function sanitizeAuthorName(text) {
   return s(text).trim();
 }
 
+/** 粗略估算目录条目的显示宽度：中文按 2，ASCII 按 1 */
+function tocDisplayWidth(text) {
+  return Array.from(s(text)).reduce((sum, ch) => sum + (ch.charCodeAt(0) <= 0x7f ? 1 : 2), 0);
+}
+
 // ---- 主处理逻辑 ----
 
 /** 处理单篇论文，返回 LaTeX \printpaper 命令字符串 */
@@ -304,7 +309,10 @@ for (const [session, entries] of sessions) {
     // 转义标题和作者中的 LaTeX 特殊字符
     const titleEsc = escapeLatex(titleClean);
     const authEsc = escapeLatex(e.authors);
-    tocLines.push(`\\tocentry{${e.id}}{${e.labelId}}{${titleEsc}}{${authEsc}}`);
+    const tocMacro = tocDisplayWidth(titleClean) + tocDisplayWidth(e.authors) > 68
+      ? '\\tocentrytwo'
+      : '\\tocentry';
+    tocLines.push(`${tocMacro}{${e.id}}{${e.labelId}}{${titleEsc}}{${authEsc}}`);
   }
   tocLines.push('\\vspace{6pt}');
   tocLines.push('');
