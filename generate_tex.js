@@ -154,29 +154,31 @@ function processPaper(row) {
   const corrAuthorEmail = sanitizeAuthorName(row['通讯作者Email']);
 
   // 收集所有作者和单位
-  const authors = [];  // [{ name, unitStr }]
+  const authors = [];  // [{ name, unitStr, unitRegion, unitZip }]
   for (let i = 1; i <= 12; i++) {
     const name = sanitizeAuthorName(row[`作者姓名${i}`]);
     const unit = s(row[`作者单位${i}`]);
+    const region = s(row[`作者单位地区${i}`]);
+    const zip = s(row[`作者单位邮编${i}`]);
     if (name) {
-      authors.push({ name, unitStr: unit });
+      authors.push({ name, unitStr: unit, region, zip });
     }
   }
 
   if (authors.length === 0) return null;
 
-  // 建立单位去重映射
-  const unitMap = new Map();   // 原始单位字符串 → 编号
-  const unitList = [];         // (按序) [{ id, text }]
+  // 建立单位去重映射（按单位名称+地区+邮编联合去重）
+  const unitMap = new Map();   // 联合键 → 编号
+  const unitList = [];         // (按序) [{ id, text, region, zip }]
   let nextUnitId = 1;
 
-  function getOrCreateUnitId(unitText) {
-    const key = unitText.trim();
-    if (!key) return null;
+  function getOrCreateUnitId(unitText, region, zip) {
+    const key = `${unitText.trim()}||${region}||${zip}`;
+    if (!unitText.trim() && !region && !zip) return null;
     if (unitMap.has(key)) return unitMap.get(key);
     const id = nextUnitId++;
     unitMap.set(key, id);
-    unitList.push({ id, text: key });
+    unitList.push({ id, text: unitText.trim(), region, zip });
     return id;
   }
 
@@ -186,8 +188,8 @@ function processPaper(row) {
       .split(',')
       .map(u => u.trim())
       .filter(u => u.length > 0);
-    // 去重后编号
-    const ids = [...new Set(unitTexts)].map(t => getOrCreateUnitId(t)).filter(id => id !== null);
+    // 为每个单位文本创建编号（同一行内逗号分隔的单位共享同一个地区和邮编）
+    const ids = [...new Set(unitTexts)].map(t => getOrCreateUnitId(t, a.region, a.zip)).filter(id => id !== null);
     // 若无单位，分配占位编号0（极少情况）
     return {
       name: a.name,
@@ -208,10 +210,12 @@ function processPaper(row) {
     return `${name}\\ns{${superscripts}}${star}`;
   }).join(',\n    ');
 
-  // 构建单位 LaTeX 行（每行一个，前面加序号，用括号括起来，序号和单位之间空2格）
+  // 构建单位 LaTeX 行：格式为 (编号 单位名　地区　邮编)，每行一个
   const unitLine = unitList.map(u => {
-    const escaped = escapeLatex(u.text);
-    return `(${u.id}) ${escaped}`;
+    const parts = [escapeLatex(u.text)];
+    if (u.region) parts.push(escapeLatex(u.region));
+    if (u.zip) parts.push(escapeLatex(u.zip));
+    return `(${u.id} ${parts.join('\\quad ')})`;
   }).join('\\\\\n    ');
 
   const corrEmailLine = corrAuthorEmail
