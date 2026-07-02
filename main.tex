@@ -84,7 +84,14 @@
     {\songti\wuhao #6}
   \end{center}
   \vspace{10pt}
-  {\songti\wuhao\noindent\textbf{摘要：}#7}
+  \begingroup
+  \songti\wuhao
+  \setlength{\parindent}{0pt}
+  \setlength{\parskip}{3pt}
+  \emergencystretch=2em
+  \tolerance=500
+  \noindent\textbf{摘要：}#7
+  \endgroup
   \par\vspace{8pt}
   {\songti\wuhao\noindent\textbf{关键词：}#8}
   \par\vspace{6pt}
