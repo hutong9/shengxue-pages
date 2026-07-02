@@ -11,10 +11,10 @@
 \usepackage{newtxmath}
 \usepackage{setspace}
 
-\newcommand{\wuhao}{\fontsize{10.5pt}{15pt}\selectfont}
+\newcommand{\wuhao}{\fontsize{10.5pt}{13.125pt}\selectfont} % 五号，行距1.25倍
 \newcommand{\xiaosi}{\fontsize{12pt}{18pt}\selectfont}
 \newcommand{\sihao}{\fontsize{14pt}{20pt}\selectfont}
-\newcommand{\sanhao}{\fontsize{16pt}{24pt}\selectfont}
+\newcommand{\sanhao}{\fontsize{16pt}{20pt}\selectfont} % 三号，行距1.25倍
 \newcommand{\xiaoer}{\fontsize{18pt}{26pt}\selectfont}
 
 \usepackage{fancyhdr}
@@ -23,6 +23,14 @@
 \fancyhead[C]{\songti\wuhao 2026年全国声学大会}
 \fancyfoot[C]{\songti\wuhao\thepage}
 \renewcommand{\headrulewidth}{0.4pt}
+
+% 定义论文页面的页脚样式（带页脚线和通讯作者信息）
+\fancypagestyle{paperpage}{%
+  \fancyhf{}
+  \fancyhead[C]{\songti\wuhao 2026年全国声学大会}
+  \fancyfoot[C]{\songti\wuhao\thepage}
+  \renewcommand{\headrulewidth}{0.4pt}
+}
 
 \usepackage{indentfirst}
 \setlength{\parindent}{2em}
@@ -66,36 +74,53 @@
 
 \newcommand{\printpaper}[9]{%
   \clearpage
+  \thispagestyle{paperpage} % 使用论文页面样式
   \hypertarget{paper:#9}{}\label{paper:#9}%
   \noindent{\heiti\xiaosi 专题：#1}\hfill{\songti\wuhao #2}
   \par\vspace{10pt}
+
+  % 标题：黑体三号，居中
   \begin{center}
-    {\heiti\xiaoer\textbf{#3}}
+    {\heiti\sanhao #3}
   \end{center}
-  \vspace{6pt}
+  \vspace{0.5\baselineskip}
+
+  % 作者：楷体四号，居中
   \begin{center}
     {\kaishu\sihao #4}
   \end{center}
-  \vspace{2pt}
+  \vspace{0.5\baselineskip}
+
+  % 单位：宋体五号
   \begin{center}
     {\songti\wuhao #5}
   \end{center}
-  \vspace{2pt}
-  \begin{center}
-    {\songti\wuhao #6}
-  \end{center}
-  \vspace{10pt}
-  {\songti\wuhao\noindent\textbf{摘要：}#7}
-  \par\vspace{8pt}
-  {\songti\wuhao\noindent\textbf{关键词：}#8}
+  \vspace{0.5\baselineskip}
+
+  % 摘要：黑体五号，后空两格，不加冒号
+  % 摘要正文：宋体五号，行距1.25倍
+  \begingroup
+  \setlength{\parindent}{0pt}
+  \setlength{\parskip}{0pt}
+  \noindent{\heiti\wuhao 摘要}\hspace{2em}{\songti\wuhao #7}
+  \endgroup
+  \vspace{\baselineskip}
+
+  % 关键词：黑体五号，左对齐，后空两格
+  % 具体关键词：宋体五号，末尾不加标点
+  \noindent{\heiti\wuhao 关键词}\hspace{2em}{\songti\wuhao #8}
   \par\vspace{6pt}
+
+  % 页面左下角脚线和通讯作者
+  \vfill
+  \noindent\rule{3cm}{0.5pt}\\[2pt]
+  {\songti\wuhao 通讯作者：#6}
 }
 
 \newcommand{\ns}[1]{\textsuperscript{#1}}
 \newcommand{\ca}{\textsuperscript{*}}
 
 \begin{document}
-
 
 \thispagestyle{empty}
 \vspace*{2cm}

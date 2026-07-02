@@ -208,15 +208,14 @@ function processPaper(row) {
     return `${name}\\ns{${superscripts}}${star}`;
   }).join(',\n    ');
 
-  // 构建单位 LaTeX 行（多单位时加序号前缀，用中文分号分隔）
+  // 构建单位 LaTeX 行（每行一个，前面加序号，用括号括起来，序号和单位之间空2格）
   const unitLine = unitList.map(u => {
     const escaped = escapeLatex(u.text);
-    if (isSingleUnit) return escaped;
-    return `${u.id}. ${escaped}`;
-  }).join('；\\hspace{1em}\n    ');
+    return `(${u.id}) ${escaped}`;
+  }).join('\\\\\n    ');
 
   const corrEmailLine = corrAuthorEmail
-    ? `\\textsuperscript{*}${escapeLatex(corrAuthorEmail)}`
+    ? `${escapeLatex(corrAuthorName)}，${escapeLatex(corrAuthorEmail)}`
     : '';
 
   // 标题换行处理：过长标题在 40 字处断行
