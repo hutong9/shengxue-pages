@@ -22,6 +22,9 @@ papers_content.tex
 # 依赖
 node_modules/
 
+# 数据源文件
+摘要信息.xls
+
 # 工作流模板（非项目源码）
 .spec-workflow/
 .serena/
