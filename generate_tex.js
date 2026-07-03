@@ -127,7 +127,7 @@ function sanitizeKeywords(text) {
        .replace(/~/g, '\\~{}');
   t = convertHtmlEntities(t);
   t = t.replace(/(?<!\\)&/g, '\\&');
-  t = t.split(',').map(k => k.trim()).filter(Boolean).join('；');
+  t = t.split(',').map(k => k.trim()).filter(Boolean).join('，');
   return t;
 }
 
