@@ -21,8 +21,12 @@ const OUTPUT_PATH = path.join(__dirname, 'papers_content.tex');
 
 // ---- 工具函数 ----
 
-/** 安全 trim，处理 null/undefined */
-function s(v) { return (v || '').toString().trim(); }
+/** 安全 trim，处理 null/undefined；并清除零宽/不可见字符（pdfLaTeX 会渲染成空白） */
+function s(v) {
+  return (v || '').toString()
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2060\uFEFF\u00AD]/g, '')
+    .trim();
+}
 
 /** 转义 LaTeX 特殊字符 */
 function escapeLatex(text) {
@@ -39,6 +43,27 @@ function escapeLatex(text) {
     .replace(/\}/g, '\\}')
     .replace(/</g, '\\textless{}')
     .replace(/>/g, '\\textgreater{}');
+}
+
+/**
+ * 在中英混排边界插入 \allowbreak，提供合法断行点。
+ *
+ * 背景：pdfLaTeX + CJK 宏包下，汉字与拉丁字母/数字直接相连时（如
+ * “以Gauss–Legendre–Lobatto节点”）会被当作一个不可断行的长词，
+ * 一旦超出行宽就溢出右页边距（Overfull \hbox）。中文之间的断行由
+ * CJK 宏包处理，故只需在“汉字↔拉丁/数字”交界处补上断行点。
+ * 破折号（en dash）后同样不可断行，一并在其后插入断行点。
+ *
+ * 说明：\allowbreak 即 \penalty0，宽度为 0，不会影响 \settowidth
+ * 量出的目录标题宽度，也不会引入任何可见空白。
+ */
+function softenBreaks(text) {
+  if (!text) return text;
+  const CJK = '\\u3400-\\u4DBF\\u4E00-\\u9FFF\\uF900-\\uFAFF';
+  return text
+    .replace(new RegExp(`([${CJK}])(?=[A-Za-z0-9])`, 'g'), '$1\\allowbreak{}')
+    .replace(new RegExp(`([A-Za-z0-9])(?=[${CJK}])`, 'g'), '$1\\allowbreak{}')
+    .replace(/\u2013/g, '\u2013\\allowbreak{}');   // – en dash
 }
 
 /** 将 HTML 实体（&alpha; 等）和希腊字母转为 LaTeX 命令 */
@@ -136,11 +161,6 @@ function sanitizeAuthorName(text) {
   return s(text).trim();
 }
 
-/** 粗略估算目录条目的显示宽度：中文按 2，ASCII 按 1 */
-function tocDisplayWidth(text) {
-  return Array.from(s(text)).reduce((sum, ch) => sum + (ch.charCodeAt(0) <= 0x7f ? 1 : 2), 0);
-}
-
 // ---- 主处理逻辑 ----
 
 /** 处理单篇论文，返回 LaTeX \printpaper 命令字符串 */
@@ -222,27 +242,33 @@ function processPaper(row) {
     ? `${escapeLatex(corrAuthorName)}，${escapeLatex(corrAuthorEmail)}`
     : '';
 
-  // 标题换行处理：过长标题在 40 字处断行
-  const titleLine = title.length > 45 ? `${title.slice(0, Math.floor(title.length/2))}\\\\\n   ${title.slice(Math.floor(title.length/2))}` : title;
+ 
+  // 标题折行：仍按原字符数切分（保持既有版式），切分后再插入断行点，
+  // 避免 \allowbreak 被切断而破坏 LaTeX 语法
+  const titleLine = softenBreaks(
+    title.length > 45
+      ? `${title.slice(0, Math.floor(title.length/2))}\\\\\n   ${title.slice(Math.floor(title.length/2))}`
+      : title
+  );
   const labelId = paperId.replace(/[^A-Za-z0-9]/g, '');
   return `\\printpaper
   {${session}}
   {${paperId}}
   {${titleLine}}
   {%
-    ${authorLine}
+    ${softenBreaks(authorLine)}
   }
   {%
-    ${unitLine}
+    ${softenBreaks(unitLine)}
   }
   {%
-    ${corrEmailLine}
+    ${softenBreaks(corrEmailLine)}
   }
   {%
-    ${abstract}
+    ${softenBreaks(abstract)}
   }
   {%
-    ${keywords}
+    ${softenBreaks(keywords)}
   }
   {${labelId}}`;
 }
@@ -313,10 +339,9 @@ for (const [session, entries] of sessions) {
     // 转义标题和作者中的 LaTeX 特殊字符
     const titleEsc = escapeLatex(titleClean);
     const authEsc = escapeLatex(e.authors);
-    const tocMacro = tocDisplayWidth(titleClean) + tocDisplayWidth(e.authors) > 68
-      ? '\\tocentrytwo'
-      : '\\tocentry';
-    tocLines.push(`${tocMacro}{${e.id}}{${e.labelId}}{${titleEsc}}{${authEsc}}`);
+    // 版式（单行 / 标题行+姓名行 / 自然流动）由 main_full.tex 中
+    // \tocentry 宏内用 \settowidth 实测宽度自动选择，此处无需判断
+    tocLines.push(`\\tocentry{${e.id}}{${e.labelId}}{${titleEsc}}{${authEsc}}`);
   }
   tocLines.push('\\vspace{6pt}');
   tocLines.push('');
