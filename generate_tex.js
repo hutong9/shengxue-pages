@@ -25,6 +25,10 @@
  *   7. 通讯作者在姓名后加 \ca（*号上标）
  *   8. 每位作者姓名后按 \ns{编号} 加单位序号（去重且升序）
  *   9. 生成 \printpaper{...}，并输出 unit_report.csv 审计报告
+ *  10. 去掉摘要正文开头作者误写的「摘要：」标签（模板已自行印出「摘要」二字），
+ *      源表里有 15 篇出现「摘要　摘要：…」的重复。
+ *  11. 删掉「数值 单位」之间的空格（如 20 mm → 20mm）：普通空格在 TeX 里是
+ *      可拉伸的 interword glue，中文段落两端对齐时会把它拉得很宽。
  */
 const XLSX = require('xlsx');
 const fs = require('fs');
@@ -249,6 +253,27 @@ function supSubToMath(text) {
   return t;
 }
 
+// ---- 直双引号 " → 中文弯引号 “ ” ----
+// 源表里的引号一律是 ASCII 直引号 `"`（例：A0463 的 在"双碳"目标）。
+// 若原样写进 .tex，newtxtext(TeX Gyre Termes) 会把这**每一个** `"` 都排成
+// 右引号 `”`（Termes 的 `"` 是按位置取字形的 TeX 连字，CJK 标点上下文里判错），
+// 于是 PDF 上出现 在”双碳”目标 —— 开引号也是右引号。
+//
+// 源表里 `"` 的数量**恒为偶数**（全库 51 个字段、158 个引号，已逐一核对），
+// 因此按「出现次序奇偶」交替判定开/闭即可；同时跟踪文本中已存在的 `“`/`”`
+// （D0384、V0235 等少数条目本来就是真弯引号），避免混排时错位。
+function normalizeDoubleQuotes(text) {
+  if (!text || text.indexOf('"') === -1) return text;
+  let open = true;                       // true ⇒ 下一个直引号是开引号
+  return String(text).replace(/["\u201C\u201D]/g, (ch) => {
+    if (ch === '\u201C') { open = false; return ch; }   // 已是开引号 → 同步状态
+    if (ch === '\u201D') { open = true;  return ch; }   // 已是闭引号 → 同步状态
+    const q = open ? '\u201C' : '\u201D';
+    open = !open;
+    return q;
+  });
+}
+
 /** 将 HTML 实体（&alpha; 等）和希腊字母转为 LaTeX 命令 */
 function convertHtmlEntities(text) {
   const map = {
@@ -272,8 +297,8 @@ function convertHtmlEntities(text) {
     '&rarr;': '$\\rightarrow$',
     '&mdash;': '---',        '&ndash;': '--',
     '&hellip;': '…',         '&lsquo;': "'",
-    '&rsquo;': "'",          '&ldquo;': '"',
-    '&rdquo;': '"',          '&lt;': '<',
+    '&rsquo;': "'",          '&ldquo;': '\u201C',
+    '&rdquo;': '\u201D',     '&lt;': '<',
     '&gt;': '>',             '&nbsp;': '~',
     '&middot;': '$\\cdot$',
     '&ordm;': '\\textdegree{}',
@@ -297,12 +322,105 @@ function convertHtmlEntities(text) {
   for (const [entity, latex] of Object.entries(map)) {
     result = result.split(entity).join(latex);
   }
+  // ⑤ 直双引号 → 中文弯引号（放在最后：实体已展开成 `"` 的也一并归一）
+  result = normalizeDoubleQuotes(result);
   return result;
 }
 
+// ---- 摘要正文开头的冗余标签 / 重复标题 ----
+// 模板 \printpaper 已经自动印出「摘要」二字（main_full.tex 第 148–153 行，注释写明“不加冒号”），
+// 但源表里有 15 篇的作者把「摘要：」也写进了正文，PDF 上就成了「摘要　　摘要：为充分考虑…」。
+// 另有 D0043 把标题也在正文里重复了一遍，并单独一行写了「摘要」：
+//     工业超声清洗机的空化控制研究\n\n摘要\n   \n本项研究是在…
+// 这里循环剥离开头的：①「摘要：」/「【摘要】」标签 ②整行重复的论文标题 ③单独一行的「摘要」。
+// 只处理**开头**，正文里出现的「摘要」二字不动。
+// 兼容写法：摘要：／摘 要：／摘    要：／摘要:（半角）／【摘要】
+//
+// 注意：源表里 D0043 的「论文标题」以 U+200B 零宽空格开头（Excel 复制粘贴残留），
+// 而 JS 的 \s **不匹配**零宽字符，直接比对会导致标题行剥不掉。
+// 所以比对前两边都要先去掉零宽字符（ZWSP/ZWNJ/ZWJ/LRM/RLM/WJ/BOM）再比。
+const ZERO_WIDTH_RE = /[\u200B-\u200F\u2060\uFEFF]/g;
+const LEAD_JUNK_RE = /^[\s\u3000\u200B-\u200F\u2060\uFEFF]+/;
+/** 比对用归一化：去掉零宽字符与所有空白 */
+function normalizeForCompare(x) {
+  return String(x == null ? '' : x).replace(ZERO_WIDTH_RE, '').replace(/\s+/g, '');
+}
+const ABSTRACT_LABEL_RE = /^[ \t\u3000]*(?:【[ \t\u3000]*摘要[ \t\u3000]*】|摘[ \t\u3000]*要[ \t\u3000]*[:：])[ \t\u3000]*/;
+function stripAbstractLabel(text, rawTitle) {
+  let t = String(text == null ? '' : text);
+  const normTitle = normalizeForCompare(rawTitle);
+  for (let guard = 0; guard < 6; guard++) {
+    const before = t;
+    // ① 去掉开头的空白与零宽字符（含换行）
+    t = t.replace(LEAD_JUNK_RE, '');
+    // ② 开头的「摘要：」标签
+    t = t.replace(ABSTRACT_LABEL_RE, '');
+    // ③ 开头整行与论文标题完全相同（去空白/零宽后）→ 删掉整行
+    const firstLine = t.match(/^[^\r\n]*/);
+    if (normTitle && firstLine && normalizeForCompare(firstLine[0]) === normTitle) {
+      t = t.slice(firstLine[0].length);
+    }
+    // ④ 开头单独一行只有「摘要」（可带全/半角冒号）→ 删掉整行
+    t = t.replace(/^[ \t\u3000]*摘[ \t\u3000]*要[ \t\u3000]*[:：]?[ \t\u3000]*(\r?\n|$)/, '');
+    if (t === before) break;
+  }
+  return t;
+}
+
+// ---- 「数值 + 空格 + 单位」的空格 ----
+// 源表里数值与单位之间是普通空格（`厚度仅20 mm`、`（50 m、200 m、500 m）`）。
+// TeX 里普通空格是可拉伸的 interword glue：中文段落两端对齐时会被拉得很宽，
+// PDF 上就出现「厚度仅20    mm」「（50   m、200   m、500   m）」。
+// 处理：直接删掉这个空格（20 mm → 20mm）。
+// 若想保留一个**不可拉伸**的细空隙（GB/T 3101 的写法），把下面改成 '\\,'（\thinspace，1/6 em）即可。
+const UNIT_SPACE = '';
+
+// 只认白名单里的单位符号（长的排前面），避免把「3 A 级」这类非单位内容误改。
+// 末尾的 (?![A-Za-z]) 保证 `20 meters` 里的 m 不会被误判成米。
+const UNIT_SYMBOLS = [
+  // 长度
+  'mm', 'cm', 'dm', 'km', 'µm', 'μm', 'um', 'nm', 'pm', 'fm', 'm',
+  // 质量
+  'kg', 'mg', 'µg', 'μg', 'ug', 'ng', 'g', 't',
+  // 时间
+  'ms', 'µs', 'μs', 'us', 'ns', 'ps', 'fs', 's', 'min', 'h',
+  // 频率
+  'Hz', 'kHz', 'MHz', 'GHz', 'THz',
+  // 压力 / 声级
+  'Pa', 'kPa', 'MPa', 'GPa', 'hPa', 'dB', 'dBm', 'dBA',
+  // 功率 / 能量
+  'kW', 'MW', 'GW', 'mW', 'µW', 'μW', 'uW', 'W', 'kJ', 'MJ', 'mJ', 'J',
+  // 电学
+  'kV', 'mV', 'µV', 'μV', 'uV', 'V', 'mA', 'µA', 'μA', 'uA', 'A', 'kA',
+  // 温度
+  '°C', '℃', '°F', 'K',
+  // 其它
+  'mol', 'mmol', 'rad', 'sr', 'rpm', 'L', 'mL', 'µL', 'μL', 'uL', 'dL', 'cL',
+  'KB', 'MB', 'GB', 'TB', 'kbps', 'Mbps', 'Gbps', 'kbit', 'Mbit', 'Gbit', 'bit', 'byte',
+  'm/s', 'km/h', 'N', 'kN', 'mN',
+].sort((a, b) => b.length - a.length);
+
+const UNIT_ALT = UNIT_SYMBOLS
+  .map(u => u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  .join('|');
+
+// 空格类：半角空格 / 制表符 / 不换行空格 / 细空格 / 窄不换行空格 / 全角空格 / TeX 的 ~
+const NUMBER_UNIT_RE = new RegExp(
+  `(\\d)[ \\t\\u00A0\\u2009\\u202F\\u3000~]+(?=${UNIT_ALT}(?![A-Za-z]))`,
+  'g'
+);
+
+/** 删掉「数值 单位」之间的可拉伸空格（20 mm → 20mm） */
+function tightenNumberUnit(text) {
+  if (!text) return text;
+  return String(text).replace(NUMBER_UNIT_RE, `$1${UNIT_SPACE}`);
+}
+
 /** 转义摘要文本：先转 HTML 实体，再转 LaTeX 特殊字符（注意 & 在实体转换后再转义） */
-function sanitizeAbstract(text) {
+function sanitizeAbstract(text, rawTitle) {
   let t = s(text);
+  // 第零步：去掉作者误写进正文开头的「摘要：」标签 / 重复的标题行
+  t = stripAbstractLabel(t, rawTitle);
   // 第一步：转义原始文本中的 LaTeX 特殊字符
   t = t.replace(/%/g, '\\%')
        .replace(/_/g, '\\_')
@@ -316,6 +434,8 @@ function sanitizeAbstract(text) {
   t = t.replace(/(?<!\\)&/g, '\\&');
   // 第四步：去掉 CJK Ext-E 等 pdflatex 不支持的字符
   t = t.replace(/[\u{2A700}-\u{2F7FF}]/gu, '?');
+  // 第五步：删掉「数值 单位」之间的空格（该空格会被两端对齐拉宽）
+  t = tightenNumberUnit(t);
   return t;
 }
 
@@ -330,6 +450,7 @@ function sanitizeTitle(text) {
   t = t.replace(/(?<!\\)&/g, '\\&');
   t = t.replace(/^[\u200B-\u200F\uFEFF]+/, '');
   t = t.replace(/<[^>]*>/g, '');
+  t = tightenNumberUnit(t);
   return t;
 }
 
@@ -342,6 +463,7 @@ function sanitizeKeywords(text) {
        .replace(/~/g, '\\~{}');
   t = convertHtmlEntities(t);
   t = t.replace(/(?<!\\)&/g, '\\&');
+  t = tightenNumberUnit(t);
   t = t.split(',').map(k => k.trim()).filter(Boolean).join('，');
   return t;
 }
@@ -394,7 +516,7 @@ function processPaper(row, report) {
   const paperId = s(row['论文编号']);
   const title = sanitizeTitle(row['论文标题']);
   const keywords = sanitizeKeywords(row['论文关键字']);
-  const abstract = sanitizeAbstract(row['摘要文本']);
+  const abstract = sanitizeAbstract(row['摘要文本'], row['论文标题']);
   const corrAuthorName = sanitizeAuthorName(row['通讯作者姓名']);
   const corrAuthorEmail = sanitizeAuthorName(row['通讯作者Email']);
 
