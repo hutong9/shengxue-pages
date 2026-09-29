@@ -29,6 +29,8 @@
  *      源表里有 15 篇出现「摘要　摘要：…」的重复。
  *  11. 删掉「数值 单位」之间的空格（如 20 mm → 20mm）：普通空格在 TeX 里是
  *      可拉伸的 interword glue，中文段落两端对齐时会把它拉得很宽。
+ *  12. 摘要正文**末尾**的基金 / 致谢句摘出来，作为 \printpaper 的第 9 个参数，
+ *      由模板印在页脚「基金项目：」一行（源表里有 4 篇把致谢句写进了正文）。
  */
 const XLSX = require('xlsx');
 const fs = require('fs');
@@ -367,6 +369,51 @@ function stripAbstractLabel(text, rawTitle) {
   return t;
 }
 
+// ---- 摘要正文末尾的基金 / 致谢句 → 页脚 ----
+// 模板 \printpaper 的第 9 个参数专印「基金项目」，位置在页面左下角脚线之下的
+// 页脚区（与「通讯作者」同处一块）。但源表里有 4 篇把致谢句直接写进了摘要正文末尾：
+//     A0463  本课题承蒙国家自然科学基金项目(12274122，12574480)的支持，特此致谢！
+//     A0464  本论文承蒙国家自然科学基金项目(12574480，12274122)的支持，特此致谢！
+//     A0465  本课题承蒙国家自然科学基金项目(12574480，12274122)的支持，特此致谢！
+//     E0461  本论文承蒙国家自然科学基金项目(12274122，12574480)的支持，特此致谢！
+// 这里把摘要**末尾**的这类句子摘出来交给页脚渲染，正文里不再重复出现。
+//
+// 只认这些特征词，**且整句必须落在末尾**：正文中间的「课题」「资助」等词
+// （如 B0169 的「水下声隐身成为重要课题」、G0396 的「课题组围绕…」）不受影响。
+// 若某篇摘要整篇就是一个基金句（摘完为空），则不动它，避免把正文掏空。
+const FUND_HINT_RE = /基金|资助|承蒙|致谢|感谢|重点研发计划|基金委/i;
+// 句界（中文句号 / 叹号 / 问号 / 分号 / 换行）
+const SENT_END_RE = /[。！？；!?;\n\r]/;
+
+/**
+ * 从摘要末尾摘出基金 / 致谢句。
+ * @returns {{ abstract: string, funding: string }} funding 为空串表示未找到。
+ */
+function extractFunding(raw) {
+  const text = String(raw == null ? '' : raw);
+  const body = text.replace(/[\s\u3000]+$/, '');                 // 去掉尾部空白
+  if (!body || !FUND_HINT_RE.test(body)) return { abstract: text, funding: '' };
+
+  // ① 先剥掉整段末尾的句末标点，便于定位「最后一句」的起止
+  let end = body.length;
+  while (end > 0 && /[。！？；!?;]/.test(body[end - 1])) end--;
+  const punct = body.slice(end);                                // 末尾标点（如「！」）
+  const core = body.slice(0, end);
+
+  // ② 从后往前找最后一处句界
+  let cut = -1;
+  for (let k = core.length - 1; k >= 0; k--) {
+    if (SENT_END_RE.test(core[k])) { cut = k; break; }
+  }
+  const tail = core.slice(cut + 1).trim();
+  if (!tail || !FUND_HINT_RE.test(tail)) return { abstract: text, funding: '' };
+
+  const funding = (tail + punct).trim();
+  const rest = body.slice(0, cut + 1).replace(/[\s\u3000]+$/, '');
+  if (!rest) return { abstract: text, funding: '' };            // 摘完为空 → 不动
+  return { abstract: rest, funding };
+}
+
 // ---- 「数值 + 空格 + 单位」的空格 ----
 // 源表里数值与单位之间是普通空格（`厚度仅20 mm`、`（50 m、200 m、500 m）`）。
 // TeX 里普通空格是可拉伸的 interword glue：中文段落两端对齐时会被拉得很宽，
@@ -416,11 +463,13 @@ function tightenNumberUnit(text) {
   return String(text).replace(NUMBER_UNIT_RE, `$1${UNIT_SPACE}`);
 }
 
-/** 转义摘要文本：先转 HTML 实体，再转 LaTeX 特殊字符（注意 & 在实体转换后再转义） */
-function sanitizeAbstract(text, rawTitle) {
+/**
+ * 正文类文本（摘要 / 基金行）的公共转义步骤。
+ * 顺序不可随意调换：先转义原始 LaTeX 特殊字符，再把 HTML 实体展开
+ * （实体展开会引入 `$`、`\` 等），最后才处理孤立 `&` 与数值单位空格。
+ */
+function escapeBodyText(text) {
   let t = s(text);
-  // 第零步：去掉作者误写进正文开头的「摘要：」标签 / 重复的标题行
-  t = stripAbstractLabel(t, rawTitle);
   // 第一步：转义原始文本中的 LaTeX 特殊字符
   t = t.replace(/%/g, '\\%')
        .replace(/_/g, '\\_')
@@ -437,6 +486,16 @@ function sanitizeAbstract(text, rawTitle) {
   // 第五步：删掉「数值 单位」之间的空格（该空格会被两端对齐拉宽）
   t = tightenNumberUnit(t);
   return t;
+}
+
+/** 转义摘要文本（第零步先剥离作者误写的「摘要：」标签 / 重复的标题行） */
+function sanitizeAbstract(text, rawTitle) {
+  return escapeBodyText(stripAbstractLabel(s(text), rawTitle));
+}
+
+/** 转义基金 / 致谢句（页脚「基金项目」行）；与摘要同款转义，但不剥离标签 */
+function sanitizeFunding(text) {
+  return escapeBodyText(text);
 }
 
 /** 转义标题 */
@@ -516,7 +575,10 @@ function processPaper(row, report) {
   const paperId = s(row['论文编号']);
   const title = sanitizeTitle(row['论文标题']);
   const keywords = sanitizeKeywords(row['论文关键字']);
-  const abstract = sanitizeAbstract(row['摘要文本'], row['论文标题']);
+  // 摘要末尾的基金 / 致谢句单独摘出，交给页脚渲染（正文里不再重复）
+  const { abstract: abstractRaw, funding: fundingRaw } = extractFunding(row['摘要文本']);
+  const abstract = sanitizeAbstract(abstractRaw, row['论文标题']);
+  const funding = sanitizeFunding(fundingRaw);
   const corrAuthorName = sanitizeAuthorName(row['通讯作者姓名']);
   const corrAuthorEmail = sanitizeAuthorName(row['通讯作者Email']);
 
@@ -691,6 +753,13 @@ function processPaper(row, report) {
       : title
   );
   const labelId = paperId.replace(/[^A-Za-z0-9]/g, '');
+  // \printpaper 只有 9 个参数（TeX 宏参数上限为 9），因此不再单独传 labelId：
+  // 锚点名直接用第 2 个参数（论文编号）。全库 432 条编号均为纯字母数字，
+  // 若将来出现其他字符，锚点会与目录不一致，此处提前告警。
+  if (labelId !== paperId) {
+    console.warn(`  ⚠ 论文编号「${paperId}」含非字母数字字符，` +
+                 `与目录锚点「paper:${labelId}」可能不一致，请检查。`);
+  }
   return `\\printpaper
   {${session}}
   {${paperId}}
@@ -710,7 +779,15 @@ function processPaper(row, report) {
   {%
     ${softenBreaks(keywords)}
   }
-  {${labelId}}`;
+  {${softenBreaks(funding)}}`;
+
+  // ⚠ 第 9 个参数（基金）**必须写成单行** `{...}`，不能像上面那样写成
+  //     {%
+  //       <内容>
+  //     }
+  //   因为当内容为空时，那一行就成了空行，而 TeX 会把「空行」读成 `\par`，
+  //   于是参数并非空串而是 `\par`，模板里的空值判断就会被骗过。
+  //   全库只有这 4 篇有基金句，其余 428 篇的空参数必须是真正的 `{}`。
 }
 
 // ---- 主流程 ----
@@ -795,7 +872,6 @@ for (const row of data) {
   const sid = s(row['论文编号']);
   const session = s(row['论文专题']);
   if (!sid) continue;
-  const labelId = sid.replace(/[^A-Za-z0-9]/g, '');
   const authorNames = [];
   for (let i = 1; i <= 12; i++) {
     const n = sanitizeAuthorName(row[`作者姓名${i}`]);
@@ -804,7 +880,7 @@ for (const row of data) {
   const authorStr = authorNames.join(', ');
   const title = sanitizeTitle(row['论文标题']);
   if (!sessions.has(session)) sessions.set(session, []);
-  sessions.get(session).push({ id: sid, labelId, title, authors: authorStr });
+  sessions.get(session).push({ id: sid, title, authors: authorStr });
 }
 
 const tocLines = [
@@ -832,7 +908,8 @@ for (const [session, entries] of sessions) {
     const authEsc = escapeLatex(e.authors);
     // 版式（单行 / 标题行+姓名行 / 自然流动）由 main_full.tex 中
     // \tocentry 宏内用 \settowidth 实测宽度自动选择，此处无需判断
-    tocLines.push(`\\tocentry{${e.id}}{${e.labelId}}{${titleEsc}}{${authEsc}}`);
+    // 锚点名与 \printpaper 的 \hypertarget{paper:#2} 保持完全一致（均为论文编号）
+    tocLines.push(`\\tocentry{${e.id}}{${e.id}}{${titleEsc}}{${authEsc}}`);
   }
   tocLines.push('\\vspace{6pt}');
   tocLines.push('');

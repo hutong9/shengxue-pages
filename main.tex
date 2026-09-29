@@ -74,10 +74,14 @@
   \endgroup
 }
 
+% \printpaper{专题}{编号}{标题}{作者}{单位}{通讯邮箱}{摘要}{关键词}{基金}
+%   · 第 9 个参数为基金 / 致谢句，印在页脚「基金项目：」一行；为空时不打行。
+%   · 空参数**必须**写成 `{}`（空行会被 TeX 读成 `\par`，参数就不再是空串）。
+%   · 超链接锚点直接用第 2 个参数（论文编号）。TeX 宏参数上限为 9 个。
 \newcommand{\printpaper}[9]{%
   \clearpage
   \thispagestyle{paperpage} % 使用论文页面样式
-  \hypertarget{paper:#9}{}\label{paper:#9}%
+  \hypertarget{paper:#2}{}\label{paper:#2}%
   \noindent{\heiti\xiaosi 专题：#1}\hfill{\songti\wuhao #2}
   \par\vspace{10pt}
 
@@ -107,9 +111,12 @@
   \noindent{\heiti\wuhao 关键词}\hspace{2em}{\songti\wuhao #8}
   \par\vspace{6pt}
 
-  % 页面左下角脚线和通讯作者姓名、邮箱
+  % 页面左下角脚线、基金项目与通讯作者姓名、邮箱
   \vfill
   \noindent\rule{3cm}{0.5pt}\\[2pt]
+  \if\relax\detokenize{#9}\relax\else
+    {\songti\wuhao 基金项目：#9}\\[2pt]
+  \fi
   {\songti\wuhao 通讯作者：#6}
 }
 
@@ -155,6 +162,8 @@
 {%
   三维声传播；耦合简正波；水平折射；浅海波导；实验验证
 }
-{A0094}
+{%
+  本论文承蒙国家自然科学基金项目(12345678)的支持，特此致谢！
+}
 
 \end{document}

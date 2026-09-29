@@ -4,6 +4,9 @@
 *.out
 *.toc
 *.synctex.gz
+*.fls
+*.fdb_latexmk
+*.blg
 missfont.log
 
 # 生成的 PDF（可按需取消注释以纳入版本管理）
@@ -22,9 +25,12 @@ papers_content.tex
 # 依赖
 node_modules/
 
-# 数据源文件
+# 数据源文件（`摘要信息.csv` 是 Excel 导出的 GBK 副本，脚本只读 .xls，不纳入版本管理）
 摘要信息.xls
+摘要信息.csv
 
-# 工作流模板（非项目源码）
+# 工具运行时产物
 .spec-workflow/
 .serena/
+.playwright-mcp/
+.cache/

@@ -126,10 +126,17 @@
 % 兼容旧版内容文件（旧 toc_content.tex 用 \tocentrytwo）
 \let\tocentrytwo\tocentry
 
+% \printpaper{专题}{编号}{标题}{作者}{单位}{通讯邮箱}{摘要}{关键词}{基金}
+%   · 第 9 个参数为基金 / 致谢句（由 generate_tex.js 从摘要末尾摘出），
+%     印在页脚「基金项目：」一行；为空时不打行。
+%   · 空参数**必须**写成 `{}`：内容文件里若把空值写成
+%       {%<空行>} ，TeX 会把空行读成 `\par`，参数就不是空串了。
+%   · 超链接锚点直接用第 2 个参数（论文编号）。TeX 宏参数上限为 9 个，
+%     而全库 432 条论文编号均为纯字母数字，故无需再单传一个 labelId。
 \newcommand{\printpaper}[9]{%
   \clearpage
   \thispagestyle{paperpage} % 使用论文页面样式
-  \hypertarget{paper:#9}{}\label{paper:#9}%
+  \hypertarget{paper:#2}{}\label{paper:#2}%
   \noindent{\heiti\xiaosi 专题：#1}\hfill{\songti\wuhao #2}
   \par\vspace{10pt}
 
@@ -159,9 +166,13 @@
   \noindent{\heiti\wuhao 关键词}\hspace{2em}{\songti\wuhao #8}
   \par\vspace{6pt}
 
-  % 页面左下角脚线和通讯作者
+  % 页面左下角脚线、基金项目与通讯作者
+  % 基金句来自 generate_tex.js 的 extractFunding()（源表里写在摘要末尾）
   \vfill
   \noindent\rule{3cm}{0.5pt}\\[2pt]
+  \if\relax\detokenize{#9}\relax\else
+    {\songti\wuhao 基金项目：#9}\\[2pt]
+  \fi
   {\songti\wuhao 通讯作者：#6}
 }
 
