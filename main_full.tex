@@ -5,7 +5,10 @@
 \documentclass[a4paper,twoside]{ctexart}
 
 \usepackage[top=2.5cm, bottom=2.5cm, left=2.8cm, right=2.8cm]{geometry}
-\setlength{\headheight}{14pt}
+% 页眉中间的会议名称用了 12pt（比左右两侧的 10.5pt 大），行高 14.4pt，
+% 故 headheight 需 ≥ 15pt。geometry 的 top 固定为 2.5cm，加大 headheight
+% 只会让页眉整体上移，正文位置与分页不受影响。
+\setlength{\headheight}{16pt}
 
 \usepackage{newtxtext}
 \usepackage{newtxmath}
@@ -20,14 +23,20 @@
 \usepackage{fancyhdr}
 \pagestyle{fancy}
 \fancyhf{}
-\fancyhead[C]{\songti\wuhao 2026年全国声学大会}
+% 页眉：左 = 会议日期　中 = 会议名称（字号略大）　右 = 会议地点
+\newcommand{\headfont}{\fontsize{12pt}{14.4pt}\selectfont}
+\fancyhead[L]{\songti\wuhao 2026年10月23-26日}
+\fancyhead[C]{\headfont\songti 2026年全国声学大会}
+\fancyhead[R]{\songti\wuhao 中国·西安}
 \fancyfoot[C]{\songti\wuhao\thepage}
 \renewcommand{\headrulewidth}{0.4pt}
 
 % 定义论文页面的页脚样式（带页脚线和通讯作者信息）
 \fancypagestyle{paperpage}{%
   \fancyhf{}
-  \fancyhead[C]{\songti\wuhao 2026年全国声学大会}
+  \fancyhead[L]{\songti\wuhao 2026年10月23-26日}
+  \fancyhead[C]{\headfont\songti 2026年全国声学大会}
+  \fancyhead[R]{\songti\wuhao 中国·西安}
   \fancyfoot[C]{\songti\wuhao\thepage}
   \renewcommand{\headrulewidth}{0.4pt}
 }
