@@ -6,18 +6,36 @@
  * 输出：papers_content.tex（可直接 \input 到主模板）
  *
  * 处理逻辑：
- *   1. 读取 Excel 中每篇论文的作者1-12及对应单位
- *   2. 将所有单位拆分逗号 → 去重 → 按首次出现顺序编号
- *   3. 通讯作者在姓名后加 \ca（*号上标）
- *   4. 每位作者姓名后按 \ns{编号} 加单位序号
- *   5. 生成 \printpaper{...}{...}{...}{作者行}{单位行}{通讯作者邮箱}{摘要}{关键词}
+ *   1. 读取 Excel 中每篇论文的作者1-12及其单位
+ *   2. 「作者单位N / 作者单位地区N / 作者单位邮编N」是三个半角逗号分隔的平行列表，
+ *      按索引 j 一一对应：单位[j] ↔ 地区[j] ↔ 邮编[j]。
+ *      长度不等时按位置配对：多余忽略、缺失留空。
+ *      全角「，」出现在单位名内部（如“南京大学物理学院，南京大学声学研究所”），不是分隔符。
+ *   3. 缺失邮编（空串 / 全零占位 000000）用全表反查补齐：
+ *      「单位名+地区」→ 唯一邮编 自动补（A 级）；多候选（B 级）/ 无候选（C 级）留空。
+ *      A 级补齐在编号去重之前执行，使同一单位的“无邮编条目”与“有邮编条目”归并为同一编号。
+ *   4. 地区名规范化：若同目录存在 region_map.csv（两列：原值,新值），
+ *      将「区/县」等规范化成「市」再用于展示与去重；
+ *      但邮编反查索引仍用**原始**地区名，以保证 A 级补齐精度不下降。
+ *   5. 人工邮编对照表：若同目录存在 zip_map.csv（三列：单位名,地区,邮编；地区可留空表示不限），
+ *      则命中者直接套用（优先级高于一切自动补齐）。
+ *      两个映射表既可为 UTF-8（可带 BOM），也可为 GBK/GB18030（中文 Excel 另存的 CSV）。
+ *      海外单位的条目可在表里留空「地区 + 邮编」，脚本会保持留空、不做补齐。
+ *   6. 按「单位名+地区+邮编」三者全同去重并编号（按首次出现顺序）
+ *   7. 通讯作者在姓名后加 \ca（*号上标）
+ *   8. 每位作者姓名后按 \ns{编号} 加单位序号（去重且升序）
+ *   9. 生成 \printpaper{...}，并输出 unit_report.csv 审计报告
  */
 const XLSX = require('xlsx');
 const fs = require('fs');
 const path = require('path');
+const { TextDecoder } = require('util');
 
 const EXCEL_PATH = path.join(__dirname, '摘要信息.xls');
 const OUTPUT_PATH = path.join(__dirname, 'papers_content.tex');
+const REPORT_PATH = path.join(__dirname, 'unit_report.csv');
+const REGION_MAP_PATH = path.join(__dirname, 'region_map.csv');
+const ZIP_MAP_PATH = path.join(__dirname, 'zip_map.csv');
 
 // ---- 工具函数 ----
 
@@ -26,6 +44,124 @@ function s(v) {
   return (v || '').toString()
     .replace(/[\u200B-\u200F\u202A-\u202E\u2060\uFEFF\u00AD]/g, '')
     .trim();
+}
+
+/** 按半角逗号切分为列表：去空白、去空项。绝不切分全角「，」（它在单位名内部） */
+function splitList(v) {
+  return s(v).split(',').map(x => x.trim()).filter(Boolean);
+}
+
+/** 判断邮编是否缺失：空串 或 全零占位（000000 / 0000000…，允许前后空白） */
+function isMissingZip(z) {
+  const t = s(z);
+  return t === '' || /^0+$/.test(t);
+}
+
+/**
+ * 读取文本文件并自动识别编码。
+ * 手工维护的 CSV（region_map.csv / zip_map.csv）经常用 Excel/WPS 编辑，
+ * 而中文版 Excel 默认另存为 GBK/GB18030（不是 UTF-8），直接按 utf-8 读会变成乱码。
+ * 策略：有 UTF-8 BOM 直接按 UTF-8；否则先做**严格** UTF-8 校验，失败再按 GB18030 解码。
+ */
+function readTextAuto(filePath) {
+  const buf = fs.readFileSync(filePath);
+  if (buf.length >= 3 && buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF) {
+    return buf.slice(3).toString('utf-8');
+  }
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buf);
+  } catch (e) {
+    try {
+      console.log(`  注：${path.basename(filePath)} 不是 UTF-8，已按 GB18030（Excel 另存的中文 CSV）读取。`);
+      return new TextDecoder('gb18030').decode(buf);
+    } catch (e2) {
+      return buf.toString('utf-8');
+    }
+  }
+}
+
+// ---- 地区名映射表（可选）----
+// 文件 region_map.csv：两列「原值,新值」，UTF-8（可带 BOM）或 GBK，`#` 开头为注释行。
+// 用途：把源表里的「区/县」规范化成「市」，例如 闵行区 → 上海市。
+// 作用范围：**仅展示与单位去重**；邮编反查索引（buildZipIndex）仍用原始地区名，
+//          否则「单位+城市」的键会比「单位+区」粗，可能把唯一映射变成多候选（A 级降为 B 级）。
+const regionMap = new Map();
+
+function loadRegionMap() {
+  if (!fs.existsSync(REGION_MAP_PATH)) return;
+  const text = readTextAuto(REGION_MAP_PATH);
+  for (const line of text.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t || t.startsWith('#')) continue;
+    const cells = t.split(',');
+    const from = s(cells[0]);
+    const to = s(cells[1]);
+    if (!from || !to || from === to) continue;
+    if (from === '原值') continue;                 // 跳过表头
+    regionMap.set(from, to);
+  }
+}
+
+/** 把原始地区名映射成规范地区名（表中无该条则原样返回） */
+function mapRegion(r) {
+  const t = s(r);
+  return regionMap.get(t) || t;
+}
+
+// ---- 人工邮编对照表（可选，优先级最高）----
+// 文件 zip_map.csv：三列「单位名,地区,邮编」（UTF-8 或 GBK 均可）。
+//   地区 写**映射后的**地区名（与 unit_report.csv 的「地区」列一致，如 北京市）；
+//   地区 留空表示「不限地区」，用于该单位名在全国独一无二的情况。
+// 命中规则时直接套用该邮编（无论原文有无邮编）；邮编列留空的行不是规则，会被忽略。
+const zipMap = new Map();       // `${单位名}||${地区}` → 邮编
+const zipMapUsed = new Set();   // 已被命中的键（用于报告未命中项，防拼写不匹配）
+const zipMapStats = { hit: 0, changed: 0 };   // 命中条目数 / 其中真正改写（或补上）的数
+
+function loadZipMap() {
+  if (!fs.existsSync(ZIP_MAP_PATH)) return;
+  const text = readTextAuto(ZIP_MAP_PATH);
+  for (const line of text.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t || t.startsWith('#')) continue;
+    const cells = t.split(',');
+    const unit = s(cells[0]);
+    const region = s(cells[1]);
+    const zip = s(cells[2]);
+    if (!unit || unit === '单位名') continue;      // 跳过表头
+    if (!zip || zip === '邮编') continue;          // 未填邮编 → 不是规则
+    zipMap.set(`${unit}||${region}`, zip);
+  }
+}
+
+/** 查人工对照表：先精确匹配「单位名+地区」，再退化为「单位名」（地区不限） */
+function lookupZipMap(unit, dispRegion) {
+  const exact = `${s(unit)}||${s(dispRegion)}`;
+  if (zipMap.has(exact)) { zipMapUsed.add(exact); return zipMap.get(exact); }
+  const wide = `${s(unit)}||`;
+  if (zipMap.has(wide)) { zipMapUsed.add(wide); return zipMap.get(wide); }
+  return null;
+}
+
+/**
+ * 安全写文件。
+ * 输出文件（papers_content.tex / toc_content.tex / unit_report.csv）常被 Excel、
+ * WPS 或 PDF 阅读器打开，写入会抛 EBUSY。这里给出可操作的提示而非难懂的堆栈。
+ * 注意：unit_report.csv / toc_content.tex / papers_content.tex 都是**生成物**，
+ * 往里面手工补充内容一定会被下次运行覆盖；要改数据请改源表 摘要信息.xls 或映射表 region_map.csv。
+ */
+function writeTextFile(target, content) {
+  try {
+    fs.writeFileSync(target, content, 'utf-8');
+  } catch (err) {
+    if (err && (err.code === 'EBUSY' || err.code === 'EPERM' || err.code === 'EACCES')) {
+      console.error('');
+      console.error(`✗ 无法写入 ${path.basename(target)} —— 该文件正被其他程序占用（通常是 Excel / WPS）。`);
+      console.error('  请先关闭它，然后重新运行：node generate_tex.js');
+      console.error('');
+      process.exit(1);
+    }
+    throw err;
+  }
 }
 
 /** 转义 LaTeX 特殊字符 */
@@ -66,6 +202,53 @@ function softenBreaks(text) {
     .replace(/\u2013/g, '\u2013\\allowbreak{}');   // – en dash
 }
 
+// ---- Unicode 上标 / 下标字符 → LaTeX 数学模式 ----
+// 源表里混进了 Unicode 上标字符（例：`min⁻&sup1;` 的 `⁻`、`10⁻⁴` 的 `⁻⁴`）。
+// pdfLaTeX + 中文 CJK 字体没有 U+2070–U+209F 的字形，而 CJK 宏包遇到缺字形
+// 会**静默丢弃**（连 "Missing character" 都不报），于是：
+//     min⁻¹ → 「min 1」      10⁻⁴ → 「10 ⁴」
+// 这里把整段上/下标串转成 $^{-1}$ / $_{2}$，交给 newtxmath 排版。
+const SUP_CHARS = '⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿ';
+const SUB_CHARS = '₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₒₓₕₖₗₘₙₚₛₜ';
+const SUP_ASCII = {
+  '⁰':'0','¹':'1','²':'2','³':'3','⁴':'4','⁵':'5','⁶':'6','⁷':'7','⁸':'8','⁹':'9',
+  '⁺':'+','⁻':'-','⁼':'=','⁽':'(','⁾':')','ⁿ':'n',
+};
+const SUB_ASCII = {
+  '₀':'0','₁':'1','₂':'2','₃':'3','₄':'4','₅':'5','₆':'6','₇':'7','₈':'8','₉':'9',
+  '₊':'+','₋':'-','₌':'=','₍':'(','₎':')',
+  'ₐ':'a','ₑ':'e','ₒ':'o','ₓ':'x','ₕ':'h','ₖ':'k','ₗ':'l','ₘ':'m','ₙ':'n','ₚ':'p','ₛ':'s','ₜ':'t',
+};
+
+// 源表还有「上标减号 + 普通数字」的混合写法（C0317 的 `10⁻4`）。
+// true  ⇒ 合并成 $^{-4}$（正确）
+// false ⇒ 原样保留，渲染为 `10⁻4`（减号上标、数字不上标，仍不美观）
+// 全库只有 C0317 一处命中；更彻底的做法是把源表改成 `10⁻⁴`。
+const MERGE_SIGN_DIGIT = true;
+
+/**
+ * Unicode / 命名上标、下标 → $^{…}$ / $_{…}$
+ * 必须在命名实体替换**之前**调用：先把 `&sup1;` 归一成 `¹`，
+ * 才能和源表里已有的 Unicode 上标合并成同一段（`⁻&sup1;` → `⁻¹` → `$^{-1}$`）。
+ */
+function supSubToMath(text) {
+  if (!text) return text;
+  let t = text;
+  // ① 命名上标实体先归一成 Unicode，便于整段识别
+  t = t.replace(/&sup([123]);/g, (_, n) => ({ '1': '¹', '2': '²', '3': '³' }[n]));
+  // ② 连续上标串 → $^{…}$   （min⁻¹ → min$^{-1}$）
+  t = t.replace(new RegExp(`[${SUP_CHARS}]+`, 'g'),
+        m => '$^{' + Array.from(m).map(c => SUP_ASCII[c] || c).join('') + '}$');
+  // ③ 连续下标串 → $_{…}$
+  t = t.replace(new RegExp(`[${SUB_CHARS}]+`, 'g'),
+        m => '$_{' + Array.from(m).map(c => SUB_ASCII[c] || c).join('') + '}$');
+  // ④ 「纯符号上标 + 紧跟的普通数字」合并：10⁻4 → 10$^{-4}$
+  if (MERGE_SIGN_DIGIT) {
+    t = t.replace(/\$\^\{([-+]+)\}\$(\d+)/g, (_, sign, digits) => `$^{${sign}${digits}}$`);
+  }
+  return t;
+}
+
 /** 将 HTML 实体（&alpha; 等）和希腊字母转为 LaTeX 命令 */
 function convertHtmlEntities(text) {
   const map = {
@@ -97,16 +280,23 @@ function convertHtmlEntities(text) {
     '&eacute;': "\\'{e}",
     '&zwnj;': '',
     '&deg;': '\\textdegree{}',
-    '&sup1;': '\\textsuperscript{1}',
-    '&sup2;': '\\textsuperscript{2}',
-    '&sup3;': '\\textsuperscript{3}',
+    // 说明：&sup1; &sup2; &sup3; 不在这里处理，
+    //       统一交给 supSubToMath() 与 Unicode 上标合并成 $^{…}$
   };
   let result = text;
+  // ① 数字实体**先**解码成 Unicode 字符：
+  //    这样 &#185; / &#xB9;（即 `¹`）能并入下一步的上标串统一处理；
+  //    若仍放在最后解码，解出的 `¹` 会直接漏进 .tex 被 pdfLaTeX 丢弃。
+  result = result.replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)));
+  result = result.replace(/&#x([0-9a-fA-F]+);/g, (_, n) => String.fromCodePoint(parseInt(n, 16)));
+  // ② 解码后冒出的零宽 / 不可见字符，pdfLaTeX 不认，直接删掉
+  result = result.replace(/[\u200B-\u200F\u202A-\u202E\u2060\uFEFF\u00AD]/g, '');
+  // ③ Unicode / 命名上标、下标 → $^{…}$ / $_{…}$
+  result = supSubToMath(result);
+  // ④ 其余命名实体
   for (const [entity, latex] of Object.entries(map)) {
     result = result.split(entity).join(latex);
   }
-  result = result.replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)));
-  result = result.replace(/&#x([0-9a-fA-F]+);/g, (_, n) => String.fromCodePoint(parseInt(n, 16)));
   return result;
 }
 
@@ -161,10 +351,45 @@ function sanitizeAuthorName(text) {
   return s(text).trim();
 }
 
+// ---- 全表反查表：缺失邮编的 A 级补齐依据 ----
+// zipIndex:      `${单位名}||${地区}` → Set<邮编>   （只收有效邮编，排除空与全零占位）
+// zipIndexCount: `${单位名}||${地区}` → 有效出现次数（仅用于报告）
+// 必须在处理任何论文之前建好；且基于「原始配对结果」而非渲染串，避免污染。
+const zipIndex = new Map();
+const zipIndexCount = new Map();
+
+function zipKey(unit, region) {
+  return `${s(unit)}||${s(region)}`;
+}
+
+function buildZipIndex(rows) {
+  for (const row of rows) {
+    for (let i = 1; i <= 12; i++) {
+      if (!sanitizeAuthorName(row[`作者姓名${i}`])) continue;
+      const units = splitList(row[`作者单位${i}`]);
+      const regions = splitList(row[`作者单位地区${i}`]);
+      const zips = splitList(row[`作者单位邮编${i}`]);
+      units.forEach((u, j) => {
+        const region = regions[j] || '';
+        const zip = zips[j] || '';
+        if (isMissingZip(zip)) return;
+        const k = zipKey(u, region);
+        if (!zipIndex.has(k)) zipIndex.set(k, new Set());
+        zipIndex.get(k).add(zip);
+        zipIndexCount.set(k, (zipIndexCount.get(k) || 0) + 1);
+      });
+    }
+  }
+}
+
 // ---- 主处理逻辑 ----
 
-/** 处理单篇论文，返回 LaTeX \printpaper 命令字符串 */
-function processPaper(row) {
+/**
+ * 处理单篇论文，返回 LaTeX \printpaper 命令字符串。
+ * @param {object} row    Excel 一行
+ * @param {Array}  report 审计报告收集数组（按引用追加）
+ */
+function processPaper(row, report) {
   const session = s(row['论文专题']);
   const paperId = s(row['论文编号']);
   const title = sanitizeTitle(row['论文标题']);
@@ -173,19 +398,112 @@ function processPaper(row) {
   const corrAuthorName = sanitizeAuthorName(row['通讯作者姓名']);
   const corrAuthorEmail = sanitizeAuthorName(row['通讯作者Email']);
 
-  // 收集所有作者和单位
-  const authors = [];  // [{ name, unitStr, unitRegion, unitZip }]
+  // ── 1. 收集作者：三个平行列表按索引 j 一一配对 ──
+  const authors = [];   // [{ name, pairs: [{ unit, region, zip, zipRaw, fillLevel }] }]
   for (let i = 1; i <= 12; i++) {
     const name = sanitizeAuthorName(row[`作者姓名${i}`]);
-    const unit = s(row[`作者单位${i}`]);
-    const region = s(row[`作者单位地区${i}`]);
-    const zip = s(row[`作者单位邮编${i}`]);
-    if (name) {
-      authors.push({ name, unitStr: unit, region, zip });
+    if (!name) continue;
+
+    const units   = splitList(row[`作者单位${i}`]);
+    const regions = splitList(row[`作者单位地区${i}`]);
+    const zips    = splitList(row[`作者单位邮编${i}`]);
+
+    // 只有「地区数与单位数不符」或「邮编非空但与单位数不符」才是真正的配对异常；
+    // 邮编整列为空（zips.length === 0）属常见情况，已由 A/B/C 三档逐条报告，不在此重复告警。
+    const regionMismatch = units.length !== regions.length;
+    const zipPartialMismatch = zips.length > 0 && zips.length !== units.length;
+    if (regionMismatch || zipPartialMismatch) {
+      report.push({
+        type: '长度不一致', paperId, author: name,
+        unit: units.join(' | '), region: regions.map(mapRegion).join(' | '),
+        zipRaw: zips.join(' | '), zipFill: '',
+        candCount: '', occCount: '',
+        detail: `单位${units.length}/地区${regions.length}/邮编${zips.length}（按位置配对，多余忽略、缺失留空）`,
+      });
     }
+
+    authors.push({
+      name,
+      pairs: units.map((u, j) => ({
+        unit: u,
+        region: regions[j] || '',      // 越界 → 留空
+        zip: zips[j] || '',            // 越界 → 留空
+        zipRaw: zips[j] || '',         // 报告用：保留原值（含 000000）
+        fillLevel: '',
+      })),
+    });
   }
 
   if (authors.length === 0) return null;
+
+  // ── 2. 人工邮编对照表 zip_map.csv（最高优先级，命中即套用）──
+  // 命中即无条件覆盖。但只把「原文缺失」或「与原值不同」的记入报告，
+  // 否则同一单位的高频条目（如“中国科学院声学研究所”）会把报告刷成几百行。
+  for (const a of authors) {
+    for (const p of a.pairs) {
+      const forced = lookupZipMap(p.unit, mapRegion(p.region));
+      if (forced === null) continue;
+      zipMapStats.hit++;
+      const changed = s(p.zip) !== forced;
+      p.zip = forced;
+      p.fillLevel = 'M';
+      if (!changed && !isMissingZip(p.zipRaw)) continue;   // 与原文完全一致 → 不必记报告
+      zipMapStats.changed++;
+      report.push({
+        type: '已指定-zip_map', paperId, author: a.name,
+        unit: p.unit, region: mapRegion(p.region),
+        zipRaw: p.zipRaw, zipFill: forced,
+        candCount: 1, occCount: '',
+        detail: changed ? `人工对照表指定（原值「${p.zipRaw || '空'}」）` : '人工对照表指定（与原值一致）',
+      });
+    }
+  }
+
+  // ── 3. 缺失邮编补齐（必须在编号去重之前！）──
+  for (const a of authors) {
+    for (const p of a.pairs) {
+      if (!isMissingZip(p.zip)) continue;              // 已有有效邮编，不动
+      // 邮编反查用**原始**地区名（键更细、精度更高）；展示与去重用规范化后的地区名
+      const k = zipKey(p.unit, p.region);
+      const dispRegion = mapRegion(p.region);
+      const regionNote = dispRegion === s(p.region) ? '' : `（原地区：${s(p.region)}）`;
+      const set = zipIndex.get(k);
+      const occ = zipIndexCount.get(k) || 0;
+
+      if (set && set.size === 1) {
+        // A 级：同「单位名+地区」在全表只有唯一有效邮编 → 安全回填
+        p.zip = [...set][0];
+        p.fillLevel = 'A';
+        report.push({
+          type: '已补齐-A级', paperId, author: a.name,
+          unit: p.unit, region: dispRegion,
+          zipRaw: p.zipRaw, zipFill: p.zip,
+          candCount: set.size, occCount: occ,
+          detail: '唯一映射' + regionNote,
+        });
+      } else if (set && set.size > 1) {
+        p.fillLevel = 'B';
+        p.zip = '';                                     // 占位/无效值清空，报告里保留 zipRaw
+        report.push({
+          type: '缺邮编-B级', paperId, author: a.name,
+          unit: p.unit, region: dispRegion,
+          zipRaw: p.zipRaw, zipFill: '',
+          candCount: set.size, occCount: occ,
+          detail: '候选不唯一：' + [...set].join(' / ') + regionNote,
+        });
+      } else {
+        p.fillLevel = 'C';
+        p.zip = '';                                     // 占位/无效值清空，报告里保留 zipRaw
+        report.push({
+          type: '缺邮编-C级', paperId, author: a.name,
+          unit: p.unit, region: dispRegion,
+          zipRaw: p.zipRaw, zipFill: '',
+          candCount: 0, occCount: 0,
+          detail: '全表无同「单位名+地区」的有效邮编记录' + regionNote,
+        });
+      }
+    }
+  }
 
   // 建立单位去重映射（按单位名称+地区+邮编联合去重）
   const unitMap = new Map();   // 联合键 → 编号
@@ -202,18 +520,18 @@ function processPaper(row) {
     return id;
   }
 
-  // 为每位作者的逗号分隔单位列表分配编号
+  // ── 4. 为每位作者按配对结果分配编号（去重 + 升序）──
   const authorEntries = authors.map(a => {
-    const unitTexts = a.unitStr
-      .split(',')
-      .map(u => u.trim())
-      .filter(u => u.length > 0);
-    // 为每个单位文本创建编号（同一行内逗号分隔的单位共享同一个地区和邮编）
-    const ids = [...new Set(unitTexts)].map(t => getOrCreateUnitId(t, a.region, a.zip)).filter(id => id !== null);
-    // 若无单位，分配占位编号0（极少情况）
+    const ids = [];
+    for (const p of a.pairs) {
+      const id = getOrCreateUnitId(p.unit, mapRegion(p.region), p.zip);
+      if (id !== null) ids.push(id);
+    }
+    // 去重后升序，消除 \ns{5,2} 这类乱序
+    const uniq = [...new Set(ids)].sort((x, y) => x - y);
     return {
       name: a.name,
-      unitIds: ids.length > 0 ? ids : [0],
+      unitIds: uniq.length > 0 ? uniq : [0],
       isCorresponding: (a.name === corrAuthorName),
     };
   });
@@ -289,13 +607,64 @@ data.sort((a, b) => {
   return s(a['论文编号']).localeCompare(s(b['论文编号']));
 });
 
+// 载入地区名映射表（region_map.csv，可选）：把「区/县」规范化成「市」
+loadRegionMap();
+console.log(regionMap.size > 0
+  ? `Region map loaded: ${regionMap.size} rules.`
+  : 'Region map: none (region_map.csv not found) - 地区名保持原样.');
+
+// 载入人工邮编对照表（zip_map.csv，可选）
+loadZipMap();
+console.log(zipMap.size > 0
+  ? `Zip map loaded: ${zipMap.size} rules.`
+  : 'Zip map: none (zip_map.csv not found or empty).');
+
+// 先建全表邮编反查表（缺失邮编的 A 级补齐依赖它）
+buildZipIndex(data);
+console.log(`Zip index built: ${zipIndex.size} distinct unit||region keys.`);
+
+const report = [];
 const papers = [];
 for (const row of data) {
-  const result = processPaper(row);
+  const result = processPaper(row, report);
   if (result) papers.push(result);
 }
 
 console.log(`Processed ${papers.length} valid papers.`);
+
+// ---- 写出审计报告 unit_report.csv（UTF-8 带 BOM，Excel 可直接打开）----
+const REPORT_HEADER = ['类型', '论文编号', '作者', '单位', '地区', '邮编原值', '补齐值', '候选数', '出现次数', '备注'];
+function csvEscape(v) {
+  const t = (v === undefined || v === null) ? '' : String(v);
+  return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+}
+const reportLines = [REPORT_HEADER.join(',')];
+for (const r of report) {
+  reportLines.push([
+    r.type, r.paperId, r.author, r.unit, r.region,
+    r.zipRaw, r.zipFill, r.candCount, r.occCount, r.detail || '',
+  ].map(csvEscape).join(','));
+}
+writeTextFile(REPORT_PATH, String.fromCharCode(0xFEFF) + reportLines.join('\r\n') + '\r\n');
+
+const countBy = t => report.filter(r => r.type === t).length;
+console.log(`Report written to ${REPORT_PATH}`);
+console.log('  zip_map 命中 ' + zipMapStats.hit + ' 条（其中改写/补上 ' + countBy('已指定-zip_map') +
+            ' 条）/ A 级补齐 ' + countBy('已补齐-A级') +
+            ' 条 / B 级留空 ' + countBy('缺邮编-B级') +
+            ' 条 / C 级留空 ' + countBy('缺邮编-C级') + ' 条 / 长度不一致 ' + countBy('长度不一致') + ' 条');
+
+// 报告 zip_map.csv 中未被任何论文命中的规则（多半是单位名/地区名写法不一致）
+if (zipMap.size > 0) {
+  const unused = [...zipMap.keys()].filter(k => !zipMapUsed.has(k));
+  if (unused.length === 0) {
+    console.log(`  zip_map.csv：${zipMap.size} 条规则全部命中。`);
+  } else {
+    console.log(`  ⚠ zip_map.csv：${unused.length}/${zipMap.size} 条规则未命中，请检查单位名/地区名写法：`);
+    for (const k of unused.slice(0, 20)) console.log('     · ' + k.replace('||', '  /  '));
+    if (unused.length > 20) console.log(`     · …另有 ${unused.length - 20} 条`);
+  }
+}
 
 // 生成 TOC（按专题分组，带引导符和超链接）
 const TOC_PATH = path.join(__dirname, 'toc_content.tex');
@@ -347,7 +716,7 @@ for (const [session, entries] of sessions) {
   tocLines.push('');
 }
 
-fs.writeFileSync(TOC_PATH, tocLines.join('\n'), 'utf-8');
+writeTextFile(TOC_PATH, tocLines.join('\n'));
 console.log(`TOC written to ${TOC_PATH}`);
 
 // 生成输出
@@ -362,7 +731,7 @@ const output = [
   '',
 ].join('\n');
 
-fs.writeFileSync(OUTPUT_PATH, output, 'utf-8');
+writeTextFile(OUTPUT_PATH, output);
 console.log(`Written to ${OUTPUT_PATH}`);
 
 
