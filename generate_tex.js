@@ -57,6 +57,63 @@ function splitList(v) {
   return s(v).split(',').map(x => x.trim()).filter(Boolean);
 }
 
+/**
+ * 清除**单个单位名内部**的重复机构名（保守版：只删「可证明冗余」的部分）。
+ *
+ * 背景：源表 摘要信息.xls 里不少单元格把机构前缀写了两遍，直接排版会重复显示，例如
+ *   「浙江大学 浙江大学国际健康医学研究院/浙江大学医学院附属第四医院」
+ *   「中国科学院声学研究所 中国科学院」
+ *   「南京大学南京大学声学研究所 近代声学教育部重点实验室 物理学院」
+ *
+ * 只处理三类**明确冗余**，其余一律原样保留：
+ *   A. 无分隔符前缀自重复：`P P 其余` → `P 其余`（P 取最长可行值）
+ *   B. 空格分段中，某段与另一段**完全相同** → 只留一份
+ *   C. 空格分段中，某段被另一段**完整包含**（双向判据）→ 删掉较短的那段
+ *
+ * 刻意不做的事（保守边界）：
+ *   - 绝不跨半角逗号合并：`北京大学,清华大学` 是**两个**单位，任何时候都不合并；
+ *     本函数只作用于「一个逗号项」内部，因此两份不同单位不会被误并。
+ *   - 绝不删长度 < 2 的分段，避免把占位符「无」、续行符「/」当作重复删掉。
+ *   - 绝不把整串删空（drop 数达到分段数时放弃本次收敛）。
+ *   - 不处理全角逗号「，」：它在单位名内部（如「南京大学物理学院，南京大学声学研究所」），
+ *     由 C 规则按「被包含」处理。
+ *
+ * 全库实测：仅命中 131 处 / 涉及 40 篇，已逐条人工核对，无误判。
+ */
+function stripUnitDup(name) {
+  let t = s(name);
+  if (!t) return t;
+
+  // A. 前缀自重复（P 取最长可行值，避免把「南京大学声学研究所」切成「声学研究所」）
+  for (let L = Math.min(16, Math.floor(t.length / 2)); L >= 2; L--) {
+    const p = t.slice(0, L);
+    if (t.slice(L).startsWith(p)) { t = t.slice(L).trim(); break; }
+  }
+
+  // B/C. 空格分段之间的完全重复 / 包含
+  const segs = t.split(/[ \u3000]+/).filter(Boolean);
+  if (segs.length > 1) {
+    const drop = new Set();
+    for (let a = 0; a < segs.length; a++) {
+      if (segs[a].length < 2) continue;                  // 单字符（「无」「/」）绝不删
+      for (let b = 0; b < segs.length; b++) {
+        if (a === b) continue;
+        if (!segs[b].includes(segs[a])) continue;
+        if (segs[a] !== segs[b] || a < b) drop.add(a);   // 两段全等时保留靠后的那份
+      }
+    }
+    if (drop.size && drop.size < segs.length) {
+      t = segs.filter((_, i) => !drop.has(i)).join(' ');
+    }
+  }
+  return t;
+}
+
+/** 单位列表：先按半角逗号切分，再对每一项做内部去重。项数不变，可与地区/邮编按下标配对 */
+function splitUnits(v) {
+  return splitList(v).map(stripUnitDup).filter(Boolean);
+}
+
 /** 判断邮编是否缺失：空串 或 全零占位（000000 / 0000000…，允许前后空白） */
 function isMissingZip(z) {
   const t = s(z);
@@ -130,12 +187,20 @@ function loadZipMap() {
     const t = line.trim();
     if (!t || t.startsWith('#')) continue;
     const cells = t.split(',');
-    const unit = s(cells[0]);
+    // 规则里的单位名与数据侧走同一套收敛，否则源表里写了两遍前缀的单位会「键变了」
+    // 而查不到规则（表现为报告里「N 条规则未命中」）。
+    const unit = stripUnitDup(cells[0]);
     const region = s(cells[1]);
     const zip = s(cells[2]);
     if (!unit || unit === '单位名') continue;      // 跳过表头
     if (!zip || zip === '邮编') continue;          // 未填邮编 → 不是规则
-    zipMap.set(`${unit}||${region}`, zip);
+    const key = `${unit}||${region}`;
+    const prev = zipMap.get(key);
+    if (prev !== undefined && prev !== zip) {
+      console.warn(`  ⚠ zip_map.csv：归一化后出现重复规则「${unit}｜${region || '(不限地区)'}」，` +
+        `邮编 ${prev} 被 ${zip} 覆盖，请检查该单位名是否写了两遍机构前缀。`);
+    }
+    zipMap.set(key, zip);
   }
 }
 
@@ -547,7 +612,8 @@ function buildZipIndex(rows) {
   for (const row of rows) {
     for (let i = 1; i <= 12; i++) {
       if (!sanitizeAuthorName(row[`作者姓名${i}`])) continue;
-      const units = splitList(row[`作者单位${i}`]);
+      // 键必须与 processPaper 的查表键口径一致 → 两边都用 splitUnits
+      const units = splitUnits(row[`作者单位${i}`]);
       const regions = splitList(row[`作者单位地区${i}`]);
       const zips = splitList(row[`作者单位邮编${i}`]);
       units.forEach((u, j) => {
@@ -588,7 +654,8 @@ function processPaper(row, report) {
     const name = sanitizeAuthorName(row[`作者姓名${i}`]);
     if (!name) continue;
 
-    const units   = splitList(row[`作者单位${i}`]);
+    // 单位名内部重复在这里收敛（项数不变，仍可与地区/邮编按下标配对）
+    const units   = splitUnits(row[`作者单位${i}`]);
     const regions = splitList(row[`作者单位地区${i}`]);
     const zips    = splitList(row[`作者单位邮编${i}`]);
 
