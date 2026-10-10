@@ -1,0 +1,7 @@
+interface:
+  display_name: "Conference Proceedings LaTeX"
+  short_description: "会议论文摘要集 LaTeX 排版规则"
+  default_prompt: "Use $conference-proceedings-latex to generate and validate a Chinese conference proceedings LaTeX abstract book."
+
+policy:
+  allow_implicit_invocation: true

@@ -588,7 +588,12 @@ function sanitizeKeywords(text) {
   t = convertHtmlEntities(t);
   t = t.replace(/(?<!\\)&/g, '\\&');
   t = tightenNumberUnit(t);
-  t = t.split(',').map(k => k.trim()).filter(Boolean).join('，');
+  // 统一关键词分隔符：半角逗号「,」/ 顿号「、」/ 全角逗号「，」/ 分号「;；」
+  // 一律归一为全角逗号「，」。源表中 403 篇用半角逗号、18 篇用顿号、
+  // 3 篇用全角逗号、1 篇（D0412）半角逗号与顿号混用。
+  // 注意：不切空格与「/」——它们出现在关键词内部（如「1/3倍频程」「Sousa chinensis」）。
+  // 已核实：无任何分隔符出现在括号「（…）」内部，也无千分位数字，切分安全。
+  t = t.split(/[,、，;；]/).map(k => k.trim()).filter(Boolean).join('，');
   return t;
 }
 
